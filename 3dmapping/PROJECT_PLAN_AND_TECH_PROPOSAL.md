@@ -21,6 +21,7 @@ The dashboard will display:
 * **3D Viewer:** **CesiumJS** (React + Vite)
   * *Why CesiumJS over Three.js:* Native support for real-world GPS coordinates (WGS84/UTM), GIS data formats (GeoJSON, GeoTIFF), and ODM’s 3D Tiles without writing custom coordinate math from scratch.
 * **Processing:** **OpenDroneMap (ODM)** via Docker running on **Ricky** (Bay Computer).
+> Matt: ODM slows down a lot when you try to process more than around 60 images in a batch. If you guys could a script that when a folder of 60+ folder gets put in, it's able to split them into multiple processes and then combine at the end that'd be great. 
 * **Asset Hosting:** Lightweight static web server / API (FastAPI or Node.js) to serve tiles, models, and GeoJSON metadata.
 
 
@@ -49,7 +50,7 @@ We have verified the initial test dataset (`Callis-Road175-9-4-2026-all`):
 * Add 3D Tiles / mesh rendering to CesiumJS.
 * Add UI controls: toggle layers (orthophoto / flight path / 3D model) and view flight stats.
 * Write a simple Python automation script to run ODM on any new folder of drone photos.
-
+> Matt: See above comment in Tech stack.
 ### Phase 3: Multi-Flight Support & Sensor Hooks (Weeks 5–6)
 * Add farm and flight date selector in the dashboard.
 * Add mock pins on the 3D map for All Seeing Research sensor telemetry (soil moisture, temperature).
