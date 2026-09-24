@@ -12,7 +12,7 @@ Build a web-based **Digital Twin** for farm properties using drone imagery proce
 The dashboard will display:
 * High-resolution 2D orthophotos and 3D terrain/mesh models.
 * Drone flight paths with camera shot locations.
-* Overlay pins for future sensor streams (All Seeing Research).
+* Overlay pins for future sensor streams (All Seeing Research).o
 
 ---
 
