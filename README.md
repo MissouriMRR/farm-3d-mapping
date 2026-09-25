@@ -83,6 +83,43 @@ farm-3d-mapping/
 │   ├── 3D Mapping Requirements.pdf
 │   └── PROJECT_PLAN_AND_TECH_PROPOSAL.md
 ├── viewer/
+│   ├── public/
+│   │   └── data/
+│   │       └── callis-road/
+│   │           ├── callis_orthophoto.png # High-res orthomosaic draped on terrain
+│   │           ├── shots.geojson         # 393 camera shot coordinates & flight path
+│   │           ├── bounds.geojson        # Field survey boundary polygon (WGS84)
+│   │           └── stats.json            # ODM flight processing statistics
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── CesiumViewer.css
+│   │   │   └── CesiumViewer.tsx          # CesiumJS 3D viewer & layer controls
+│   │   ├── config/
+│   │   │   └── callisRoad.ts             # Dataset metadata and geographic bounds
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── package.json
+│   └── vite.config.ts
+└── README.md
+```
+
+---
+
+## Features
+
+- **Terrain Draped Orthophoto:** Drapes the Callis Road high-resolution orthophoto onto Cesium World Terrain with depth testing enabled.
+- **Flight Trajectory & Camera Shots:** 3D visualization of the 393 camera capture locations and drone flight trajectory path.
+- **Field Boundary:** Ground-clamped polygon depicting the field perimeter.
+- **Interactive Controls:**
+  - Layer visibility toggles (Orthophoto, Flight Path, Field Boundary).
+  - Orthophoto opacity slider to compare drone imagery with underlying satellite basemaps.
+  - Camera view presets: **3D Tilt** perspective and **Top-Down (2D)** nadir.
+
+farm-3d-mapping/
+├── 3dmapping/
+│   ├── 3D Mapping Requirements.pdf
+│   └── PROJECT_PLAN_AND_TECH_PROPOSAL.md
+├── viewer/
 │   ├── public/              # Static assets
 │   ├── src/
 │   │   ├── components/
