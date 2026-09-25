@@ -3,8 +3,108 @@ import * as Cesium from 'cesium'
 import { CALLIS_ROAD_METADATA } from '../config/callisRoad'
 import './CesiumViewer.css'
 
+type BaseMap = 'satellite' | 'hybrid' | 'road'
+type Theme = 'light' | 'dark'
+
+const BASE_MAP_STYLES: Record<BaseMap, Cesium.IonWorldImageryStyle> = {
+  satellite: Cesium.IonWorldImageryStyle.AERIAL,
+  hybrid: Cesium.IonWorldImageryStyle.AERIAL_WITH_LABELS,
+  road: Cesium.IonWorldImageryStyle.ROAD,
+}
+
+const THEME_KEY = 'viewer-theme'
+
+function initialTheme(): Theme {
+  try {
+    const stored = localStorage.getItem(THEME_KEY)
+    if (stored === 'light' || stored === 'dark') return stored
+  } catch {
+    // Storage can be unavailable (private mode, blocked site data).
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+/**
+ * Orbit-style camera controls that work on a trackpad:
+ * drag orbits around the screen centre, two-finger scroll pans, pinch zooms.
+ * A mouse wheel still zooms, and right-drag pans for mouse users.
+ * Returns a cleanup function.
+ */
+function installOrbitControls(viewer: Cesium.Viewer): () => void {
+  const { scene, camera, canvas } = viewer
+  const controller = scene.screenSpaceCameraController
+  const { CameraEventType, KeyboardEventModifier } = Cesium
+
+  // Cesium's default "rotate" spins the globe under the cursor, which reads as
+  // panning. Orbit (tilt) takes left-drag instead; the wheel is handled below.
+  controller.tiltEventTypes = [
+    CameraEventType.LEFT_DRAG,
+    CameraEventType.MIDDLE_DRAG,
+    CameraEventType.PINCH,
+  ]
+  controller.rotateEventTypes = [
+    CameraEventType.RIGHT_DRAG,
+    { eventType: CameraEventType.LEFT_DRAG, modifier: KeyboardEventModifier.SHIFT },
+  ]
+  controller.zoomEventTypes = [CameraEventType.PINCH]
+  controller.lookEventTypes = []
+
+  const distanceToGround = () => {
+    const carto = camera.positionCartographic
+    const ground = scene.globe.getHeight(carto) ?? 0
+    return Math.max(carto.height - ground, 1)
+  }
+
+  const zoom = (fraction: number) => {
+    const distance = distanceToGround()
+    // Never zoom through the ground: stop 5 m short.
+    const amount = Math.min(fraction * distance, distance - 5)
+    camera.zoomIn(amount)
+  }
+
+  const pan = (dx: number, dy: number) => {
+    // Ground-parallel pan, scaled so content follows the fingers.
+    const fovy = (camera.frustum as Cesium.PerspectiveFrustum).fovy ?? Math.PI / 3
+    const metersPerPixel = (2 * distanceToGround() * Math.tan(fovy / 2)) / canvas.clientHeight
+    const up = scene.globe.ellipsoid.geodeticSurfaceNormal(camera.positionWC, new Cesium.Cartesian3())
+    const right = Cesium.Cartesian3.clone(camera.rightWC)
+    Cesium.Cartesian3.subtract(
+      right,
+      Cesium.Cartesian3.multiplyByScalar(up, Cesium.Cartesian3.dot(right, up), new Cesium.Cartesian3()),
+      right
+    )
+    Cesium.Cartesian3.normalize(right, right)
+    const forward = Cesium.Cartesian3.cross(up, right, new Cesium.Cartesian3())
+    camera.move(right, dx * metersPerPixel)
+    camera.move(forward, -dy * metersPerPixel)
+  }
+
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault()
+    // Pinch gestures arrive as wheel events with ctrlKey set.
+    if (e.ctrlKey) {
+      zoom(Math.max(-0.5, Math.min(0.5, -e.deltaY * 0.01)))
+    } else {
+      // Trackpads report wheelDeltaY as exactly -3x deltaY; mouse wheels don't.
+      const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY
+      const isTrackpad = legacy ? legacy === -3 * e.deltaY : e.deltaMode === 0 && e.deltaX !== 0
+      if (isTrackpad) {
+        pan(e.deltaX, e.deltaY)
+      } else {
+        zoom(e.deltaY < 0 ? 0.15 : -0.15)
+      }
+    }
+    scene.requestRender()
+  }
+
+  canvas.addEventListener('wheel', onWheel, { passive: false })
+  return () => canvas.removeEventListener('wheel', onWheel)
+}
+
 export default function CesiumViewer() {
   const containerRef = useRef<HTMLDivElement>(null)
+  const creditRef = useRef<HTMLDivElement>(null)
+  const baseLayerRef = useRef<Cesium.ImageryLayer | null>(null)
   const viewerRef = useRef<Cesium.Viewer | null>(null)
   const orthoLayerRef = useRef<Cesium.ImageryLayer | null>(null)
   const flightEntityRef = useRef<Cesium.Entity | null>(null)
@@ -17,9 +117,11 @@ export default function CesiumViewer() {
   const [flightPathVisible, setFlightPathVisible] = useState(false)
   const [boundaryVisible, setBoundaryVisible] = useState(false)
   const [viewMode, setViewMode] = useState<'3d' | 'top-down'>('3d')
+  const [baseMap, setBaseMap] = useState<BaseMap>('satellite')
+  const [theme, setTheme] = useState<Theme>(initialTheme)
 
   useEffect(() => {
-    if (!containerRef.current) return
+    if (!containerRef.current || !creditRef.current) return
 
     const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN
     if (ionToken) {
@@ -30,12 +132,16 @@ export default function CesiumViewer() {
     const viewer = new Cesium.Viewer(containerRef.current, {
       timeline: false,
       animation: false,
-      baseLayerPicker: true,
+      // Cesium's own toolbar is replaced by the side panel: base map, view
+      // presets and credits all live there.
+      baseLayerPicker: false,
+      baseLayer: false,
       geocoder: false,
-      homeButton: true,
-      sceneModePicker: true,
+      homeButton: false,
+      sceneModePicker: false,
       navigationHelpButton: false,
       fullscreenButton: false,
+      creditContainer: creditRef.current,
       // No vertex normals: they only feed globe lighting, which is off, and
       // they make every terrain tile larger.
       terrain: Cesium.Terrain.fromWorldTerrain({
@@ -54,6 +160,8 @@ export default function CesiumViewer() {
     globe.maximumScreenSpaceError = 3
     // Keep more tiles in memory so panning back doesn't refetch (default 100).
     globe.tileCacheSize = 1000
+
+    const removeOrbitControls = installOrbitControls(viewer)
 
     viewerRef.current = viewer
 
@@ -169,10 +277,12 @@ export default function CesiumViewer() {
     loadBoundary().catch((e) => console.warn('Field boundary could not be loaded:', e))
 
     return () => {
+      removeOrbitControls()
       if (!viewer.isDestroyed()) {
         viewer.destroy()
       }
       viewerRef.current = null
+      baseLayerRef.current = null
       orthoLayerRef.current = null
       flightEntityRef.current = null
       flightPointsRef.current = null
@@ -186,6 +296,29 @@ export default function CesiumViewer() {
     const viewer = viewerRef.current
     if (viewer && !viewer.isDestroyed()) viewer.scene.requestRender()
   }
+
+  // Swap the base imagery, keeping it underneath the orthophoto
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || viewer.isDestroyed()) return
+    const layers = viewer.imageryLayers
+    const next = Cesium.ImageryLayer.fromProviderAsync(
+      Cesium.createWorldImageryAsync({ style: BASE_MAP_STYLES[baseMap] }),
+      {}
+    )
+    layers.add(next, 0)
+    if (baseLayerRef.current) layers.remove(baseLayerRef.current, true)
+    baseLayerRef.current = next
+    requestRender()
+  }, [baseMap])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THEME_KEY, theme)
+    } catch {
+      // Not persisting is fine; the toggle still works for this session.
+    }
+  }, [theme])
 
   // Sync orthophoto visibility & opacity
   useEffect(() => {
@@ -255,118 +388,156 @@ export default function CesiumViewer() {
     }
   }
 
+  const { name, date, gsd, flightAltitude, shotsCount, orthophotoUrl } = CALLIS_ROAD_METADATA
+
   return (
-    <div className="cesium-wrapper">
-      {/* Top Header */}
-      <div className="viewer-header">
-        <div className="header-titles">
-          <h1>Farm 3D Mapping - Digital Twin</h1>
-          <span className="subtitle">
-            {CALLIS_ROAD_METADATA.name} • {CALLIS_ROAD_METADATA.date}
-          </span>
-        </div>
-        <div className="status-badge">
-          <span className={`status-dot ${isLoaded ? 'active' : 'loading'}`} />
-          {isLoaded ? 'Orthophoto Draped' : 'Loading Orthophoto...'}
-        </div>
-      </div>
+    <div className="cesium-wrapper" data-theme={theme}>
+      <aside className="side-panel">
+        <header className="panel-head">
+          <div className="panel-titles">
+            <h1>Farm 3D Mapping - Digital Twin</h1>
+            <span className="subtitle">
+              {name} • {date}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark' ? (
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="3" />
+                <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6 13 13M3 13l1.4-1.4M11.6 4.4 13 3" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z" />
+              </svg>
+            )}
+          </button>
+          <div className="status" role="status">
+            <span className={`status-dot ${isLoaded ? 'active' : 'loading'}`} />
+            {isLoaded ? 'Orthophoto Draped' : 'Loading Orthophoto...'}
+          </div>
+        </header>
 
-      {/* Layer Controls Panel */}
-      <div className="layer-controls-panel">
-        <div className="panel-title">Map Layers</div>
-
-        {/* Orthophoto Checkbox */}
-        <div className="control-group">
-          <label className="checkbox-label">
+        <section className="panel-group">
+          <h2 className="group-title">Map Layers</h2>
+          <label className="layer-row">
             <input
               type="checkbox"
               checked={orthoVisible}
               onChange={(e) => setOrthoVisible(e.target.checked)}
             />
-            <span className="label-text">
-              <span className="legend-swatch swatch-ortho" />
-              Callis Road Orthophoto
-            </span>
-          </label>
-        </div>
-
-        {/* Opacity Slider */}
-        {orthoVisible && (
-          <div className="control-group slider-group">
-            <div className="slider-header">
-              <span>Layer Opacity</span>
-              <span>{Math.round(opacity * 100)}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={opacity}
-              onChange={(e) => setOpacity(parseFloat(e.target.value))}
-              className="slider"
+            <span
+              className="layer-symbol symbol-ortho"
+              style={{ backgroundImage: `url(${orthophotoUrl})` }}
             />
-          </div>
-        )}
-
-        {/* Flight Trajectory Checkbox */}
-        <div className="control-group">
-          <label className="checkbox-label">
+            Callis Road Orthophoto
+          </label>
+          {orthoVisible && (
+            <div className="opacity-row">
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={opacity}
+                onChange={(e) => setOpacity(parseFloat(e.target.value))}
+                aria-label="Layer Opacity"
+              />
+              <span className="opacity-value">{Math.round(opacity * 100)}%</span>
+            </div>
+          )}
+          <label className="layer-row">
             <input
               type="checkbox"
               checked={flightPathVisible}
               onChange={(e) => setFlightPathVisible(e.target.checked)}
             />
-            <span className="label-text">
-              <span className="legend-swatch swatch-flight" />
-              Flight Trajectory ({CALLIS_ROAD_METADATA.shotsCount} shots)
-            </span>
+            <svg className="layer-symbol" viewBox="0 0 26 16" aria-hidden="true">
+              <polyline className="symbol-flight-line" points="2,13 9,4 16,10 24,3" />
+              <circle className="symbol-flight-shot" cx="9" cy="4" r="1.8" />
+              <circle className="symbol-flight-shot" cx="16" cy="10" r="1.8" />
+            </svg>
+            Flight Trajectory ({shotsCount} shots)
           </label>
-        </div>
-
-        {/* Field Boundary Checkbox */}
-        <div className="control-group">
-          <label className="checkbox-label">
+          <label className="layer-row">
             <input
               type="checkbox"
               checked={boundaryVisible}
               onChange={(e) => setBoundaryVisible(e.target.checked)}
             />
-            <span className="label-text">
-              <span className="legend-swatch swatch-boundary" />
-              Field Boundary
-            </span>
+            <svg className="layer-symbol" viewBox="0 0 26 16" aria-hidden="true">
+              <rect className="symbol-boundary" x="2" y="2" width="22" height="12" rx="1" />
+            </svg>
+            Field Boundary
           </label>
-        </div>
+        </section>
 
-        {/* View Preset Buttons */}
-        <div className="control-group view-buttons">
-          <button
-            type="button"
-            className={`btn-view ${viewMode === '3d' ? 'active' : ''}`}
-            onClick={() => flyToField('3d')}
-          >
-            3D Tilt
-          </button>
-          <button
-            type="button"
-            className={`btn-view ${viewMode === 'top-down' ? 'active' : ''}`}
-            onClick={() => flyToField('top-down')}
-          >
-            Top-Down (2D)
-          </button>
-        </div>
+        <section className="panel-group">
+          <h2 className="group-title">Base Map</h2>
+          <div className="segmented" role="group" aria-label="Base Map">
+            {(
+              [
+                ['satellite', 'Satellite'],
+                ['hybrid', 'Hybrid'],
+                ['road', 'Road'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={baseMap === value}
+                onClick={() => setBaseMap(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </section>
 
-        {/* Metadata Footer */}
-        <div className="meta-footer">
-          <div><strong>Resolution:</strong> {CALLIS_ROAD_METADATA.gsd}</div>
-          <div><strong>Altitude:</strong> {CALLIS_ROAD_METADATA.flightAltitude}</div>
-          <div><strong>CRS:</strong> WGS84 (EPSG:4326) / UTM 15N</div>
-        </div>
-      </div>
+        <section className="panel-group">
+          <h2 className="group-title">View</h2>
+          <div className="segmented" role="group" aria-label="View">
+            <button
+              type="button"
+              aria-pressed={viewMode === '3d'}
+              onClick={() => flyToField('3d')}
+            >
+              3D Tilt
+            </button>
+            <button
+              type="button"
+              aria-pressed={viewMode === 'top-down'}
+              onClick={() => flyToField('top-down')}
+            >
+              Top-Down (2D)
+            </button>
+          </div>
+        </section>
 
-      <div ref={containerRef} className="cesium-container" />
+        <section className="panel-group group-survey">
+          <h2 className="group-title">Survey</h2>
+          <dl className="survey-table">
+            <dt>Resolution</dt>
+            <dd>{gsd}</dd>
+            <dt>Altitude</dt>
+            <dd>{flightAltitude}</dd>
+            <dt>CRS</dt>
+            <dd>WGS84 (EPSG:4326) / UTM 15N</dd>
+          </dl>
+        </section>
+
+        <div ref={creditRef} className="panel-credits" />
+      </aside>
+
+      <main className="map-area">
+        <div ref={containerRef} className="cesium-container" />
+      </main>
     </div>
   )
 }
-
