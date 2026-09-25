@@ -21,6 +21,11 @@ export default function CesiumViewer() {
   useEffect(() => {
     if (!containerRef.current) return
 
+    const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN
+    if (ionToken) {
+      Cesium.Ion.defaultAccessToken = ionToken
+    }
+
     // Initialize Cesium viewer with World Terrain
     const viewer = new Cesium.Viewer(containerRef.current, {
       timeline: false,
@@ -35,7 +40,18 @@ export default function CesiumViewer() {
         requestVertexNormals: true,
         requestWaterMask: false,
       }),
+      // Only redraw when the camera moves or data changes instead of every frame.
+      requestRenderMode: true,
+      maximumRenderTimeChange: Infinity,
+      // MSAA at retina resolution is expensive; default is 4 samples.
+      msaaSamples: 1,
     })
+
+    const { globe } = viewer.scene
+    // Fewer, coarser tiles (default 2). Slightly softer imagery near the horizon.
+    globe.maximumScreenSpaceError = 3
+    // Keep more tiles in memory so panning back doesn't refetch (default 100).
+    globe.tileCacheSize = 1000
 
     viewerRef.current = viewer
 
@@ -173,16 +189,25 @@ export default function CesiumViewer() {
     }
   }, [])
 
+  // requestRenderMode only redraws on camera/data changes, so layer
+  // property edits must request a frame explicitly.
+  const requestRender = () => {
+    const viewer = viewerRef.current
+    if (viewer && !viewer.isDestroyed()) viewer.scene.requestRender()
+  }
+
   // Sync orthophoto visibility & opacity
   useEffect(() => {
     if (orthoLayerRef.current) {
       orthoLayerRef.current.show = orthoVisible
+      requestRender()
     }
   }, [orthoVisible])
 
   useEffect(() => {
     if (orthoLayerRef.current) {
       orthoLayerRef.current.alpha = opacity
+      requestRender()
     }
   }, [opacity])
 
@@ -194,12 +219,14 @@ export default function CesiumViewer() {
     if (flightPointsRef.current) {
       flightPointsRef.current.show = flightPathVisible
     }
+    requestRender()
   }, [flightPathVisible])
 
   // Sync boundary visibility
   useEffect(() => {
     if (boundaryDataSourceRef.current) {
       boundaryDataSourceRef.current.show = boundaryVisible
+      requestRender()
     }
   }, [boundaryVisible])
 
