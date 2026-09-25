@@ -36,8 +36,10 @@ export default function CesiumViewer() {
       sceneModePicker: true,
       navigationHelpButton: false,
       fullscreenButton: false,
+      // No vertex normals: they only feed globe lighting, which is off, and
+      // they make every terrain tile larger.
       terrain: Cesium.Terrain.fromWorldTerrain({
-        requestVertexNormals: true,
+        requestVertexNormals: false,
         requestWaterMask: false,
       }),
       // Only redraw when the camera moves or data changes instead of every frame.
@@ -58,124 +60,113 @@ export default function CesiumViewer() {
     // Enable depth testing so draped imagery and layers conform directly to terrain
     viewer.scene.globe.depthTestAgainstTerrain = true
 
-    // Load orthophoto, flight path, and field boundary
-    const loadLayers = async () => {
-      try {
-        const { bounds, orthophotoUrl, shotsUrl, boundsUrl } = CALLIS_ROAD_METADATA
+    const { bounds, orthophotoUrl, shotsUrl, boundsUrl } = CALLIS_ROAD_METADATA
 
-        // 1. Drape Orthophoto on Terrain
-        const rectangle = Cesium.Rectangle.fromDegrees(
-          bounds.west,
-          bounds.south,
-          bounds.east,
-          bounds.north
-        )
+    // Fly to the field right away; bounds are known up front, so there's no
+    // need to wait for any layer to finish loading.
+    const centerLon = (bounds.west + bounds.east) / 2
+    const centerLat = (bounds.south + bounds.north) / 2
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(centerLon, centerLat - 0.0035, 480),
+      orientation: {
+        heading: Cesium.Math.toRadians(0),
+        pitch: Cesium.Math.toRadians(-42),
+        roll: 0.0,
+      },
+      duration: 2.5,
+    })
 
-        const provider = await Cesium.SingleTileImageryProvider.fromUrl(
-          orthophotoUrl,
-          { rectangle }
-        )
+    // The three layers are independent, so load them in parallel.
 
-        if (viewer.isDestroyed()) return
+    // 1. Drape Orthophoto on Terrain
+    const loadOrthophoto = async () => {
+      const rectangle = Cesium.Rectangle.fromDegrees(
+        bounds.west,
+        bounds.south,
+        bounds.east,
+        bounds.north
+      )
+      const provider = await Cesium.SingleTileImageryProvider.fromUrl(
+        orthophotoUrl,
+        { rectangle }
+      )
+      if (viewer.isDestroyed()) return
 
-        const layer = viewer.imageryLayers.addImageryProvider(provider)
-        layer.alpha = 1.0
-        layer.show = true
-        orthoLayerRef.current = layer
-
-        // 2. Load Drone Flight Path and Camera Shots
-        try {
-          const shotsRes = await fetch(shotsUrl)
-          if (shotsRes.ok) {
-            const shotsGeoJson = await shotsRes.json()
-            const sortedFeatures = [...shotsGeoJson.features].sort((a, b) => {
-              const timeA = a.properties?.capture_time ?? 0
-              const timeB = b.properties?.capture_time ?? 0
-              return timeA - timeB
-            })
-
-            const positions = sortedFeatures.map((f) => {
-              const [lon, lat, alt] = f.geometry.coordinates
-              return Cesium.Cartesian3.fromDegrees(lon, lat, alt)
-            })
-
-            // Flight trajectory line
-            const flightLine = viewer.entities.add({
-              id: 'flight-trajectory',
-              show: false,
-              polyline: {
-                positions,
-                width: 2.5,
-                material: new Cesium.PolylineGlowMaterialProperty({
-                  glowPower: 0.25,
-                  color: Cesium.Color.YELLOW,
-                }),
-              },
-            })
-            flightEntityRef.current = flightLine
-
-            // Camera shot points
-            const pointCollection = viewer.scene.primitives.add(
-              new Cesium.PointPrimitiveCollection()
-            )
-            positions.forEach((pos) => {
-              pointCollection.add({
-                position: pos,
-                pixelSize: 4,
-                color: Cesium.Color.fromCssColorString('#f59e0b'),
-                outlineColor: Cesium.Color.BLACK,
-                outlineWidth: 1,
-              })
-            })
-            pointCollection.show = false
-            flightPointsRef.current = pointCollection
-          }
-        } catch (e) {
-          console.warn('Flight path could not be loaded:', e)
-        }
-
-        // 3. Load Field Boundary Polygon
-        try {
-          const boundaryDataSource = await Cesium.GeoJsonDataSource.load(boundsUrl, {
-            stroke: Cesium.Color.fromCssColorString('#10b981'),
-            strokeWidth: 3,
-            fill: Cesium.Color.fromCssColorString('#10b981').withAlpha(0.12),
-            clampToGround: true,
-          })
-          if (!viewer.isDestroyed()) {
-            await viewer.dataSources.add(boundaryDataSource)
-            boundaryDataSource.show = false
-            boundaryDataSourceRef.current = boundaryDataSource
-          }
-        } catch (e) {
-          console.warn('Field boundary could not be loaded:', e)
-        }
-
-        // 4. Fly camera smoothly to Callis Road field in 3D perspective
-        const centerLon = (bounds.west + bounds.east) / 2
-        const centerLat = (bounds.south + bounds.north) / 2
-
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(
-            centerLon,
-            centerLat - 0.0035,
-            480
-          ),
-          orientation: {
-            heading: Cesium.Math.toRadians(0),
-            pitch: Cesium.Math.toRadians(-42),
-            roll: 0.0,
-          },
-          duration: 2.5,
-        })
-
-        setIsLoaded(true)
-      } catch (err) {
-        console.error('Failed to load layers:', err)
-      }
+      const layer = viewer.imageryLayers.addImageryProvider(provider)
+      layer.alpha = 1.0
+      layer.show = true
+      orthoLayerRef.current = layer
+      setIsLoaded(true)
     }
 
-    loadLayers()
+    // 2. Load Drone Flight Path and Camera Shots
+    const loadFlightPath = async () => {
+      const shotsRes = await fetch(shotsUrl)
+      if (!shotsRes.ok || viewer.isDestroyed()) return
+      const shotsGeoJson = await shotsRes.json()
+      if (viewer.isDestroyed()) return
+
+      const sortedFeatures = [...shotsGeoJson.features].sort((a, b) => {
+        const timeA = a.properties?.capture_time ?? 0
+        const timeB = b.properties?.capture_time ?? 0
+        return timeA - timeB
+      })
+
+      const positions = sortedFeatures.map((f) => {
+        const [lon, lat, alt] = f.geometry.coordinates
+        return Cesium.Cartesian3.fromDegrees(lon, lat, alt)
+      })
+
+      // Flight trajectory line
+      const flightLine = viewer.entities.add({
+        id: 'flight-trajectory',
+        show: false,
+        polyline: {
+          positions,
+          width: 2.5,
+          material: new Cesium.PolylineGlowMaterialProperty({
+            glowPower: 0.25,
+            color: Cesium.Color.YELLOW,
+          }),
+        },
+      })
+      flightEntityRef.current = flightLine
+
+      // Camera shot points
+      const pointCollection = viewer.scene.primitives.add(
+        new Cesium.PointPrimitiveCollection()
+      )
+      const pointColor = Cesium.Color.fromCssColorString('#f59e0b')
+      positions.forEach((pos) => {
+        pointCollection.add({
+          position: pos,
+          pixelSize: 4,
+          color: pointColor,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 1,
+        })
+      })
+      pointCollection.show = false
+      flightPointsRef.current = pointCollection
+    }
+
+    // 3. Load Field Boundary Polygon
+    const loadBoundary = async () => {
+      const boundaryDataSource = await Cesium.GeoJsonDataSource.load(boundsUrl, {
+        stroke: Cesium.Color.fromCssColorString('#10b981'),
+        strokeWidth: 3,
+        fill: Cesium.Color.fromCssColorString('#10b981').withAlpha(0.12),
+        clampToGround: true,
+      })
+      if (viewer.isDestroyed()) return
+      boundaryDataSource.show = false
+      await viewer.dataSources.add(boundaryDataSource)
+      boundaryDataSourceRef.current = boundaryDataSource
+    }
+
+    loadOrthophoto().catch((err) => console.error('Failed to load orthophoto:', err))
+    loadFlightPath().catch((e) => console.warn('Flight path could not be loaded:', e))
+    loadBoundary().catch((e) => console.warn('Field boundary could not be loaded:', e))
 
     return () => {
       if (!viewer.isDestroyed()) {

@@ -37,7 +37,7 @@ export const CALLIS_ROAD_METADATA: FieldMetadata = {
     latitude: 38.785977,
     elevation: 215, // meters MSL
   },
-  orthophotoUrl: '/data/callis-road/callis_orthophoto.png',
+  orthophotoUrl: '/data/callis-road/callis_orthophoto.webp',
   shotsUrl: '/data/callis-road/shots.geojson',
   boundsUrl: '/data/callis-road/bounds.geojson',
 }
