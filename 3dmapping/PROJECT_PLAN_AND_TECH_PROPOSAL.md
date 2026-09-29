@@ -42,15 +42,15 @@ We have verified the initial test dataset (`Callis-Road175-9-4-2026-all`):
 
 ### Phase 1: Viewer Prototype (Weeks 1–2)
 
-- [ ] Scaffold React + Vite app with CesiumJS.
-- [ ] Load Callis Road orthophoto draped on terrain.
-- [ ] Plot camera flight path (`shots.geojson`) and field boundary.
-- [ ] Basic camera controls (orbit, top-down view, zoom).
+- [x] Scaffold React + Vite app with CesiumJS.
+- [x] Load Callis Road orthophoto draped on terrain.
+- [x] Plot camera flight path (`shots.geojson`) and field boundary.
+- [x] Basic camera controls (orbit, top-down view, zoom).
 
 ### Phase 2: 3D Models & ODM Script (Weeks 3–4)
 
 - [ ] Add 3D Tiles / mesh rendering to CesiumJS.
-- [ ] Add UI controls: toggle layers (orthophoto / flight path / 3D model) and view flight stats.
+- [x] Add UI controls: toggle layers (orthophoto / flight path / 3D model) and view flight stats.
 - [ ] Write a simple Python automation script to run ODM on any new folder of drone photos.
 
 > Matt: See above comment in Tech stack.
