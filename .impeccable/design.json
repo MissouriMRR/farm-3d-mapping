@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-05T23:45:42.568866+00:00",
+  "title": "Design System: Farm 3D Mapping",
+  "extensions": {
+    "shadows": [],
+    "motion": [
+      {
+        "name": "control-transition",
+        "value": "150ms ease",
+        "purpose": "Color and background transitions."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "720px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Segmented control",
+      "kind": "button",
+      "description": "Static light-theme preview of the existing viewer control.",
+      "html": "<div class=\"ds-segmented\"><button aria-pressed=\"true\">Satellite</button><button>Hybrid</button><button>Road</button></div>",
+      "css": ".ds-segmented{display:flex;border:1px solid #d8dbd5;border-radius:5px;overflow:hidden}.ds-segmented button{font:12px system-ui;padding:6px 8px;border:0;background:#e9ebe7;color:#545a53}.ds-segmented button+button{border-left:1px solid #d8dbd5}.ds-segmented button[aria-pressed=true]{background:#fff;color:#1a1d1b;font-weight:500}"
+    },
+    {
+      "name": "Layer row",
+      "kind": "input",
+      "description": "Static light-theme preview of the existing viewer control.",
+      "html": "<label class=\"ds-layer\"><input type=\"checkbox\" checked>Callis Road Orthophoto</label>",
+      "css": ".ds-layer{display:flex;align-items:center;gap:10px;padding:7px 16px;background:#f4f5f3;color:#1a1d1b;font:12.5px/1.4 system-ui}.ds-layer input{width:14px;height:14px;accent-color:#2d3134}"
+    },
+    {
+      "name": "Opacity",
+      "kind": "input",
+      "description": "Static light-theme preview of the existing viewer control.",
+      "html": "<label class=\"ds-opacity\">Opacity <input type=\"range\" aria-label=\"Layer Opacity\" value=\"100\"><span>100%</span></label>",
+      "css": ".ds-opacity{display:flex;align-items:center;gap:10px;font:11.5px system-ui;color:#1a1d1b}.ds-opacity input{accent-color:#2d3134}.ds-opacity span{font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Theme toggle",
+      "kind": "button",
+      "description": "Static light-theme preview of the existing viewer control.",
+      "html": "<button class=\"ds-theme\" aria-label=\"Switch to dark mode\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z\"/></svg></button>",
+      "css": ".ds-theme{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid #d8dbd5;border-radius:6px;background:#e9ebe7;color:#545a53}.ds-theme svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5}"
+    },
+    {
+      "name": "Survey table",
+      "kind": "custom",
+      "description": "Static light-theme preview of the existing viewer control.",
+      "html": "<dl class=\"ds-survey\"><dt>Resolution</dt><dd>5.0 cm/px</dd><dt>Altitude</dt><dd>~50m AGL (266m MSL)</dd></dl>",
+      "css": ".ds-survey{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;padding:0 16px;font:11.5px system-ui;background:#f4f5f3;color:#1a1d1b}.ds-survey dt{color:#676d65}.ds-survey dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Graphite console",
+    "overview": "A compact, restrained GIS console keeps the farm imagery central. Flat neutral\nsurfaces, fine dividers, small system typography, and precise map legends carry\nthe interface. Light and dark themes share the same hierarchy and controls.",
+    "keyCharacteristics": [
+      "Compact GIS controls.",
+      "Neutral surfaces in two themes.",
+      "Map symbols that identify the displayed layers."
+    ],
+    "rules": [
+      {
+        "section": "Colors",
+        "name": "The Legend Rule",
+        "body": "Match symbol shape and color to the geographic layer."
+      }
+    ],
+    "dos": [
+      "Do keep mapping controls unified in the panel.",
+      "Do preserve both themes and visible attribution.",
+      "Do use native input semantics and visible keyboard focus."
+    ],
+    "donts": [
+      "Don't replace the compact GIS identity with floating dashboard cards.",
+      "Don't add decorative UI glow, pulsing status dots, or background blur.",
+      "Don't treat documentation of existing behavior as evidence of new visual QA."
+    ]
+  }
+}

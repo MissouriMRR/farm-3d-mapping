@@ -1,134 +1,71 @@
-# 3D Farm Mapping - Digital Twin
+# Farm 3D Mapping
 
-A web-based 3D digital twin viewer for farm properties using drone imagery and CesiumJS.
+A React and CesiumJS viewer for the Callis Road drone survey. It displays an
+orthophoto over world terrain, camera positions and their flight path, and the
+survey boundary.
 
----
+## Run locally
 
-## Prerequisites
+Use Node.js 22.18 or newer. From the repository root:
 
-Before starting, ensure you have the following installed on your machine:
-
-* **Node.js** (v18.0.0 or higher) - [Download Node.js](https://nodejs.org/)
-* **npm** (comes bundled with Node.js)
-* **Git** - [Download Git](https://git-scm.com/)
-
-Verify your installations by opening a terminal and running:
-```bash
-node -v
-npm -v
-git --version
-```
-
----
-
-## Installation & Setup
-
-Follow these simple steps to install dependencies and run the application locally:
-
-### 1. Clone the Repository
-```bash
-git clone https://github.com/MissouriMRR/farm-3d-mapping.git
-cd farm-3d-mapping
-```
-
-### 2. Navigate to the Viewer Directory
-The web application is located inside the `viewer` folder:
-```bash
+```sh
 cd viewer
-```
-
-### 3. Install Dependencies
-Install all required packages (React, Vite, CesiumJS, and plugins):
-```bash
-npm install
-```
-
----
-
-## Running the Application
-
-### Start the Development Server
-```bash
+npm ci
 npm run dev
 ```
 
-Once the server starts, open your browser and navigate to:
+Open the URL printed by Vite. To use your own Cesium ion access token, create
+`viewer/.env.local`:
+
+```dotenv
+VITE_CESIUM_ION_TOKEN=your_token_here
 ```
-http://localhost:5173
-```
 
-You should see the interactive 3D Cesium globe loaded on the screen.
+The token is used in the browser. Without it, Cesium uses its default token and
+may display a warning. World terrain and base imagery require network access.
 
----
+## Development checks
 
-## Building for Production
+Run these commands from `viewer/`:
 
-To create an optimized production build:
-```bash
+```sh
+npm run lint
+npm test
 npm run build
 ```
 
-To preview the production build locally:
-```bash
-npm run preview
-```
+The build includes strict TypeScript checking. Tests validate flight-shot data
+and ordering, including the checked-in survey. Preview a production build with
+`npm run preview`.
 
----
+## Code layout
 
-## Project Structure
+- `viewer/src/components/CesiumViewer.tsx`: screen markup and control bindings.
+- `viewer/src/components/CesiumViewer.css`: panel layout and theme tokens.
+- `viewer/src/hooks/useFieldMap.ts`: React state and the map's mounted lifetime.
+- `viewer/src/map/createFieldMap.ts`: Cesium setup, layers, and resource cleanup.
+- `viewer/src/map/camera.ts`: orbit gestures and field camera presets.
+- `viewer/src/map/flightShots.ts`: validation and chronological ordering of shots.
+- `viewer/src/hooks/useTheme.ts`: theme preference and browser storage.
+- `viewer/src/config/callisRoad.ts`: survey metadata, bounds, and asset URLs.
+- `viewer/public/data/callis-road/`: survey data; the viewer loads the WebP orthophoto.
+- `3dmapping/`: requirements and the implementation proposal.
+- `DESIGN.md` and `.impeccable/design.json`: the existing visual design and component previews.
 
-```
-farm-3d-mapping/
-├── 3dmapping/
-│   ├── 3D Mapping Requirements.pdf
-│   └── PROJECT_PLAN_AND_TECH_PROPOSAL.md
-├── viewer/
-│   ├── public/
-│   │   └── data/
-│   │       └── callis-road/
-│   │           ├── callis_orthophoto.png # High-res orthomosaic draped on terrain
-│   │           ├── shots.geojson         # 393 camera shot coordinates & flight path
-│   │           ├── bounds.geojson        # Field survey boundary polygon (WGS84)
-│   │           └── stats.json            # ODM flight processing statistics
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── CesiumViewer.css
-│   │   │   └── CesiumViewer.tsx          # CesiumJS 3D viewer & layer controls
-│   │   ├── config/
-│   │   │   └── callisRoad.ts             # Dataset metadata and geographic bounds
-│   │   ├── App.tsx
-│   │   └── main.tsx
-│   ├── package.json
-│   └── vite.config.ts
-└── README.md
-```
+Start with the screen component for UI changes and `createFieldMap` for map
+behavior. Cesium objects stay inside the map modules. Layer settings are applied
+both when controls change and when an asynchronous layer finishes loading.
 
----
+## Controls
 
-## Features
+The side panel contains layer toggles, orthophoto opacity, base-map selection,
+3D and top-down camera presets, theme selection, survey details, and attribution.
+On narrow screens, the panel sits below the map.
 
-- **Terrain Draped Orthophoto:** Drapes the Callis Road high-resolution orthophoto onto Cesium World Terrain with depth testing enabled.
-- **Flight Trajectory & Camera Shots:** 3D visualization of the 393 camera capture locations and drone flight trajectory path.
-- **Field Boundary:** Ground-clamped polygon depicting the field perimeter.
-- **Interactive Controls:**
-  - Layer visibility toggles (Orthophoto, Flight Path, Field Boundary).
-  - Orthophoto opacity slider to compare drone imagery with underlying satellite basemaps.
-  - Camera view presets: **3D Tilt** perspective and **Top-Down (2D)** nadir.
+- Drag to orbit; right-drag or Shift-drag to pan.
+- Two-finger trackpad scroll pans, pinch zooms, and a mouse wheel zooms.
+- Trackpad detection uses browser wheel-event heuristics; behavior can vary by device.
+- Selecting either view preset returns the camera to the field.
 
-farm-3d-mapping/
-├── 3dmapping/
-│   ├── 3D Mapping Requirements.pdf
-│   └── PROJECT_PLAN_AND_TECH_PROPOSAL.md
-├── viewer/
-│   ├── public/              # Static assets
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── CesiumViewer.css
-│   │   │   └── CesiumViewer.tsx  # Main CesiumJS 3D viewer component
-│   │   ├── App.tsx          # Main React component
-│   │   ├── index.css        # Global styles
-│   │   └── main.tsx         # Application entry point
-│   ├── package.json         # Project dependencies and scripts
-│   └── vite.config.ts       # Vite + Cesium plugin configuration
-└── README.md
-```
+Top-down is a camera preset over the 3D globe. The current viewer does not load
+a reconstructed 3D farm mesh.

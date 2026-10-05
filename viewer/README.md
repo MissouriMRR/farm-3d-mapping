@@ -1,28 +1,6 @@
-# Farm 3D Mapping - Web Viewer
+# Web viewer
 
-CesiumJS + React + TypeScript frontend viewer for drone orthophotos, flight paths, and 3D terrain meshes.
+See the [repository README](../README.md) for setup, configuration, controls,
+checks, and the code map. Run npm commands from this directory.
 
-## Quick Start
-
-### Install Dependencies
-```bash
-npm install
-```
-
-### Run Dev Server
-```bash
-npm run dev
-```
-Open http://localhost:5173 to access the Cesium globe viewer.
-
-### Production Build
-```bash
-npm run build
-```
-
-## Architecture
-- **Framework:** React 19 + TypeScript
-- **Bundler:** Vite with `vite-plugin-cesium`
-- **GIS Engine:** CesiumJS
-- **Main Viewer Component:** `src/components/CesiumViewer.tsx`
-
+The visual design is documented in [DESIGN.md](../DESIGN.md).
