@@ -7,7 +7,8 @@ so one ENU->ECEF transform at the reference point places the splat on the globe.
 Keeps Gaussians that are inside the field polygon (plus a margin), not near-transparent, and
 not oversized. With --dsm/--dtm (ODM's elevation models, any CRS GDAL reads) it also clips the
 splat to the measured surface: anything more than --above m over the DSM (sky floaters) or
---below m under the DTM is dropped, so the splat hugs the mesh. Without them it falls back to
+--below m under it (underground junk) is dropped, so the splat hugs the mesh. The DTM only
+marks where the elevation models have coverage. Without them it falls back to
 a coarse height band around the ground. Writes a binary PLY with a `z-up` comment,
 which 3dgs-ply-3dtiles-converter reads as ENU.
 
@@ -110,7 +111,11 @@ def main():
     ap.add_argument('reference_lla')
     ap.add_argument('boundary')
     ap.add_argument('out')
-    ap.add_argument('--margin', type=float, default=15)
+    ap.add_argument('--margin', type=float, default=-6,
+                    help='metres to grow (+) or shrink (-) the field polygon; edges have the fewest photos')
+    ap.add_argument('--edge-band', type=float, default=25,
+                    help='within this many metres of the boundary, apply --edge-aspect instead of --max-aspect')
+    ap.add_argument('--edge-aspect', type=float, default=5)
     ap.add_argument('--min-opacity', type=float, default=0.1)
     ap.add_argument('--max-scale', type=float, default=2.5, help='drop Gaussians wider than this many metres')
     ap.add_argument('--max-aspect', type=float, default=15,
@@ -118,7 +123,9 @@ def main():
     ap.add_argument('--dsm')
     ap.add_argument('--dtm')
     ap.add_argument('--above', type=float, default=0.75, help='metres allowed above the DSM')
-    ap.add_argument('--below', type=float, default=1.0, help='metres allowed below the DTM')
+    ap.add_argument('--below', type=float, default=25,
+                    help='metres allowed below the DSM. Deliberately loose: the DTM is not a safe floor, since '
+                         'under dense canopy it can keep part of the trees and would delete real ground')
     args = ap.parse_args()
 
     ref = json.load(open(args.reference_lla))
@@ -137,7 +144,10 @@ def main():
     longest, middle = axes[:, 2], np.maximum(axes[:, 1], 1e-6)
     # Nadir-only photos never see the sides of things, so training invents long thin "needles".
     # Flat discs (thin on one axis) are normal surface splats; a needle is thin on two.
-    needles = (longest / middle > args.max_aspect) & (longest > 0.3)
+    # Near the boundary, where few photos overlap, be much stricter about needles.
+    near_edge = ~inside(x, y, buffered(poly, -args.edge_band))
+    aspect_limit = np.where(near_edge, args.edge_aspect, args.max_aspect)
+    needles = (longest / middle > aspect_limit) & (longest > 0.3)
 
     keep = inside(x, y, poly) & (opacity >= args.min_opacity) & (longest <= args.max_scale) & ~needles
     stats = {'in': len(data), 'after_crop_opacity_scale': int(keep.sum())}
@@ -146,7 +156,7 @@ def main():
         dsm, dtm = sample_raster(args.dsm, lon, lat), sample_raster(args.dtm, lon, lat)
         known = ~np.isnan(dsm) & ~np.isnan(dtm)
         # Outside the elevation models' coverage there is nothing to check against; drop it.
-        keep &= known & (z <= dsm + args.above) & (z >= dtm - args.below)
+        keep &= known & (z <= dsm + args.above) & (z >= dsm - args.below)
         stats['after_surface_clip'] = int(keep.sum())
     else:
         # Coarse fallback: from just below the ground to treetop height, judged on the kept points.

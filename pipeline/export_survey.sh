@@ -31,9 +31,13 @@ docker run --rm -v "$TASK:/task:ro" -v "$OUT:/out" -v "$REPO:/repo:ro" "$GDAL_IM
   gdal_translate -q -of WEBP -co QUALITY=90 -b 1 -b 2 -b 3 -b 4 /tmp/ortho.tif /out/orthophoto.webp
   gdalinfo -json /tmp/ortho.tif > /out/orthophoto.info.json
   python3 /repo/pipeline/render_heights.py --dsm /task/odm_dem/dsm.tif --dtm /task/odm_dem/dtm.tif \
-    --ramps /repo/viewer/src/config/heightRamps.json --out /out --url-prefix "'"/data/$SURVEY"'"
+    --ramps /repo/viewer/src/config/heightRamps.json --out /out --url-prefix "'"data/$SURVEY"'"
 '
 rm -f "$OUT/orthophoto.webp.aux.xml"
+node -e "require('$REPO/pipeline/node_modules/sharp')('$OUT/orthophoto.webp').resize(256).webp({quality:80}).toFile('$OUT/orthophoto-thumb.webp')"
+# alignment.json (see README section 5) must exist before tiling; the shift is baked into tiles.
+bash "$REPO/pipeline/tile_imagery.sh" "$TASK" "$OUT"
+rm -f "$OUT/orthophoto.webp"   # tiles replace it; the panel icon uses orthophoto-thumb.webp
 
 # Needs Node.js and `npm install` in pipeline/; see the scripts for why each step exists.
 node "$REPO/pipeline/fix_tileset_bounds.mjs" "$TILES/raw"

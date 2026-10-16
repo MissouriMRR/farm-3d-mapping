@@ -14,7 +14,7 @@ import { EXTTextureWebP } from '@gltf-transform/extensions'
 import sharp from 'sharp'
 
 // Longest texture side per level. LOD-0 is the finest level in Obj2Tiles output.
-const MAX_SIDE = { 'LOD-0': 4096, 'LOD-1': 2048, 'LOD-2': 1024 }
+const MAX_SIDE = { 'LOD-0': 2048, 'LOD-1': 1024, 'LOD-2': 512 }
 const WEBP_QUALITY = 82
 
 const src = resolve(process.argv[2] ?? '')

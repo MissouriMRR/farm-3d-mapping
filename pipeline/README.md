@@ -95,8 +95,8 @@ The mesh needs three extra steps before a browser can show it:
    boxes and no `gltfUpAxis`, so Cesium buries and culls every tile. This declares z-up and
    remaps the boxes (the original stays as `tileset.odm.json`).
 3. `node optimize_mesh.mjs <tiles-dir> viewer/public/data/<survey>/mesh`: Obj2Tiles repacks
-   coarse tiles into 32768 px atlases (over 4 GB decoded). This caps textures at 1024 / 2048 /
-   4096 px for the coarse / middle / fine levels and encodes WebP: 282 MB down to 79 MB, and the
+   coarse tiles into 32768 px atlases (over 4 GB decoded). This caps textures at 512 / 1024 /
+   2048 px for the coarse / middle / fine levels and encodes WebP: 282 MB down to 79 MB, and the
    mesh loads in about 3 seconds.
 
 Writes `mesh/` (3D Tiles), `orthophoto.webp`, `dsm.png`, `dtm.png`, `canopy.png`,
@@ -128,3 +128,31 @@ floater.
 
 Check the result: `build_summary.json` must report a z-up source frame, and a road edge in the
 splat should sit on the mesh with no float or sink.
+
+## 5. Register to the basemap, and tile the imagery
+
+Without ground control the survey sits a few metres off: at Callis Road it was 3.5 m too high,
+tilted about 1.2 degrees (east side high), and 4.2 m east of the satellite road. The viewer
+corrects this from `alignment.json` in the survey folder (see `SurveyAlignment` in
+`viewer/src/config/callisRoad.ts`), applying one transform to the mesh, splat, and flight path.
+
+- **Vertical:** `ground_samples.py` samples the DTM at open-ground points (DSM within 0.3 m of
+  DTM). Fit a plane to Cesium World Terrain minus those heights (`sampleTerrainMostDetailed` in
+  the viewer with `?debug`). `up`, `slopeEast`, and `slopeNorth` are the plane's coefficients.
+- **Horizontal:** measure a sharp feature (a road edge) against the satellite basemap, top-down,
+  with the orthophoto on and off. Automatic image correlation against Esri imagery was tried
+  and was not reliable over grass.
+
+Inside the field, world terrain is cut out 25 m in from the boundary so it can't poke through
+the survey; at the edges the orthophoto-draped terrain fills in underneath.
+
+`tile_imagery.sh` then cuts the orthophoto and height maps into XYZ tile pyramids, with the
+horizontal shift baked in (`export_survey.sh` runs it; it reads `alignment.json`, so write that
+first and re-run the tiling if it changes). Single large overlays made Cesium freeze for up to a
+second while panning.
+
+## Basemaps
+
+The viewer offers USGS (NAIP), Bing, Esri, and a road map. Mean colour over the Callis field
+matched the drone imagery best for USGS (summer, leaf-on aerial photography), so it is the
+default; Bing and Esri carry brightness and saturation corrections (`BASE_MAP_GRADE`).

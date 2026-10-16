@@ -2,7 +2,7 @@
 
 Runs inside the GDAL container (see pipeline/README.md). Reads the DSM and DTM GeoTIFFs,
 derives canopy height (DSM minus DTM on the DSM grid), reprojects to EPSG:4326, and writes
-RGBA PNG overlays plus heights.json with the shared bounds and each ramp's range.
+RGBA WebP overlays plus heights.json with the shared bounds and each ramp's range.
 
 Heights stay WGS84 ellipsoidal, as ODM writes them; the viewer converts for display.
 """
@@ -60,12 +60,26 @@ def read(ds):
     return data
 
 
-def write_png(rgba, path):
+def write_geotiff(rgba, path, like):
+    """Georeferenced RGBA copy of an overlay, the input for tile_imagery.sh."""
+    h, w, _ = rgba.shape
+    ds = gdal.GetDriverByName('GTiff').Create(str(path), w, h, 4, gdal.GDT_Byte, options=['COMPRESS=DEFLATE'])
+    ds.SetGeoTransform(like.GetGeoTransform())
+    ds.SetProjection(like.GetProjection())
+    for b in range(4):
+        ds.GetRasterBand(b + 1).WriteArray(rgba[..., b])
+    ds.GetRasterBand(4).SetColorInterpretation(gdal.GCI_AlphaBand)
+    ds = None
+
+
+def write_webp(rgba, path):
     h, w, _ = rgba.shape
     mem = gdal.GetDriverByName('MEM').Create('', w, h, 4, gdal.GDT_Byte)
     for b in range(4):
         mem.GetRasterBand(b + 1).WriteArray(rgba[..., b])
-    gdal.GetDriverByName('PNG').CreateCopy(str(path), mem, options=['ZLEVEL=9'])
+    # Smooth colour ramps compress well as lossy WebP; ~5x smaller than PNG for phones.
+    gdal.GetDriverByName('WEBP').CreateCopy(str(path), mem, options=['QUALITY=88'])
+    Path(f'{path}.aux.xml').unlink(missing_ok=True)
 
 
 def main():
@@ -74,7 +88,7 @@ def main():
     ap.add_argument('--dtm', required=True)
     ap.add_argument('--ramps', required=True, help='viewer/src/config/heightRamps.json')
     ap.add_argument('--out', required=True, help='survey data directory in viewer/public/data')
-    ap.add_argument('--url-prefix', required=True, help='URL of --out as the viewer serves it')
+    ap.add_argument('--url-prefix', required=True, help='URL of --out relative to the page, e.g. data/<survey>')
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -91,14 +105,19 @@ def main():
                   south=gt[3] + gt[5] * dsm_ds.RasterYSize)
 
     layers = {}
+    (out / 'heights').mkdir(exist_ok=True)
     # Shared elevation range so Surface and Ground read on the same scale.
     lo, hi = np.nanpercentile(np.concatenate([dsm[~np.isnan(dsm)], dtm[~np.isnan(dtm)]]), [2, 98])
     for key, data in (('dsm', dsm), ('dtm', dtm)):
-        write_png(ramp_rgba(data, lo, hi, ramps['elevation']), out / f'{key}.png')
-        layers[key] = dict(url=f'{args.url_prefix}/{key}.png', min=round(float(lo), 2), max=round(float(hi), 2))
+        rgba = ramp_rgba(data, lo, hi, ramps['elevation'])
+        write_webp(rgba, out / f'{key}.webp')
+        write_geotiff(rgba, out / 'heights' / f'{key}.tif', dsm_ds)
+        layers[key] = dict(url=f'{args.url_prefix}/{key}.webp', min=round(float(lo), 2), max=round(float(hi), 2))
     c_hi = float(np.nanpercentile(canopy, 99))
-    write_png(ramp_rgba(canopy, 0, c_hi, ramps['canopy']), out / 'canopy.png')
-    layers['canopy'] = dict(url=f'{args.url_prefix}/canopy.png', min=0, max=round(c_hi, 2))
+    rgba = ramp_rgba(canopy, 0, c_hi, ramps['canopy'])
+    write_webp(rgba, out / 'canopy.webp')
+    write_geotiff(rgba, out / 'heights' / 'canopy.tif', dsm_ds)
+    layers['canopy'] = dict(url=f'{args.url_prefix}/canopy.webp', min=0, max=round(c_hi, 2))
 
     for tmp in ('_dsm_4326.tif', '_dtm_4326.tif'):
         (out / tmp).unlink(missing_ok=True)
