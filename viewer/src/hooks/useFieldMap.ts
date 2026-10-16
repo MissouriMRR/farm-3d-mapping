@@ -19,7 +19,11 @@ export function useFieldMap() {
 
   useEffect(() => {
     const requests = new AbortController()
-    void resolveActiveSurvey(requests.signal).then(setSurvey)
+    void resolveActiveSurvey(requests.signal).then(next => {
+      // A survey with a splat opens on it: it is the most legible first view of the field.
+      if (next.layers?.splatUrl) setSettings(current => ({ ...current, splatVisible: true }))
+      setSurvey(next)
+    })
     return () => requests.abort()
   }, [])
 

@@ -12,9 +12,9 @@ OUT=$REPO/viewer/public/data/$SURVEY
 GDAL_IMAGE=${GDAL_IMAGE:-ghcr.io/osgeo/gdal:ubuntu-full-3.10.3}
 mkdir -p "$OUT"
 
-echo "mesh: 3D Tiles"
-rm -rf "$OUT/mesh"
-cp -r "$TASK/3d_tiles/model" "$OUT/mesh"
+echo "mesh: single-atlas 3D Tiles, fixed and optimized for browsers"
+TILES=$(mktemp -d /tmp/mesh-tiles.XXXX)
+bash "$REPO/pipeline/tile_mesh.sh" "$TASK" "$TILES/raw"
 
 echo "orthophoto, shots, boundary, report"
 cp "$TASK/odm_report/shots.geojson" "$OUT/shots.geojson"
@@ -35,8 +35,10 @@ docker run --rm -v "$TASK:/task:ro" -v "$OUT:/out" -v "$REPO:/repo:ro" "$GDAL_IM
 '
 rm -f "$OUT/orthophoto.webp.aux.xml"
 
-echo "mesh bounding boxes: y-up -> z-up"
-# Needs Node.js on the host; see fix_tileset_bounds.mjs for why.
-node "$REPO/pipeline/fix_tileset_bounds.mjs" "$OUT/mesh"
+# Needs Node.js and `npm install` in pipeline/; see the scripts for why each step exists.
+node "$REPO/pipeline/fix_tileset_bounds.mjs" "$TILES/raw"
+rm -rf "$OUT/mesh"
+node "$REPO/pipeline/optimize_mesh.mjs" "$TILES/raw" "$OUT/mesh"
+rm -rf "$TILES"
 echo "exported to $OUT"
 du -sh "$OUT"

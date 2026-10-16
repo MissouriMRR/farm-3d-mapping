@@ -33,6 +33,26 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
   heightLayer: 'none',
 }
 
+/**
+ * ODM's boundary is the hull of the whole point cloud, a little wider than the textured mesh.
+ * Cutting terrain to the full hull leaves see-through slivers at the edges, so cut slightly inside.
+ */
+const TERRAIN_CUT_INSET_M = 20
+
+/** Pulls each vertex of a lon/lat ring toward its centroid by `metres`; returns a flat lon/lat array. */
+function insetRing(ring: number[][], metres: number): number[] {
+  const lon0 = ring.reduce((sum, [lon]) => sum + lon, 0) / ring.length
+  const lat0 = ring.reduce((sum, [, lat]) => sum + lat, 0) / ring.length
+  const metresPerDegLat = 111_320
+  const metresPerDegLon = metresPerDegLat * Math.cos(Cesium.Math.toRadians(lat0))
+  return ring.flatMap(([lon, lat]) => {
+    const dx = (lon - lon0) * metresPerDegLon
+    const dy = (lat - lat0) * metresPerDegLat
+    const scale = Math.max(0, 1 - metres / (Math.hypot(dx, dy) || 1))
+    return [lon0 + (dx * scale) / metresPerDegLon, lat0 + (dy * scale) / metresPerDegLat]
+  })
+}
+
 /** A height read at a clicked point, always in the WGS84 ellipsoidal frame. */
 export type PickedHeight = {
   longitude: number
@@ -234,7 +254,7 @@ export function createFieldMap({
         ? (geometry.coordinates as number[][][][]).map(polygon => polygon[0])
         : [(geometry.coordinates as number[][][])[0]]
       return rings.map(ring => new Cesium.ClippingPolygon({
-        positions: Cesium.Cartesian3.fromDegreesArray(ring.flatMap(([lon, lat]) => [lon, lat])),
+        positions: Cesium.Cartesian3.fromDegreesArray(insetRing(ring, TERRAIN_CUT_INSET_M)),
       }))
     })
     terrainCut = new Cesium.ClippingPolygonCollection({ polygons, enabled: false })

@@ -12,7 +12,9 @@ to regenerate them.
 | Reconstruction (alignment, mesh, DSM, DTM, orthophoto) | `odm_submit.py` | NodeODM (`opendronemap/nodeodm:gpu`) |
 | Viewer export, height ramps | `export_survey.sh` → `render_heights.py` | GDAL container |
 | Splat training | `splat_train.sh` | OpenSplat container (CUDA) |
-| Splat crop and cleanup | `splat_clean.py` | Python 3 + NumPy |
+| Mesh tiling (single-material atlas) | `tile_mesh.sh` | NodeODM image (Obj2Tiles) + GDAL |
+| Mesh tileset fix, texture optimization | `fix_tileset_bounds.mjs`, `optimize_mesh.mjs` | Node.js (`npm install` in `pipeline/`) |
+| Splat crop and cleanup | `splat_clean.py` | GDAL container (NumPy + GDAL Python) |
 | Splat tiling | `npx 3dgs-ply-3dtiles-converter` | Node.js 18+ |
 
 Everything was built and run on Windows 11 with WSL2 Ubuntu 24.04, Docker, and an RTX 3080.
@@ -84,9 +86,18 @@ at once pushes the splat into system memory, where it trains about 100 times slo
 pipeline/export_survey.sh /var/lib/docker/volumes/farm-mapping_task-data/_data/<task-uuid> callis-road-2026-08-30
 ```
 
-ODM 3.6.2's tiler writes each mesh tile's bounding box with the vertical axis on y; Cesium
-reads boxes as z-up, decides the mesh is underground, and draws nothing. The export runs
-`fix_tileset_bounds.mjs` to remap them (the original stays as `mesh/tileset.odm.json`).
+The mesh needs three extra steps before a browser can show it:
+
+1. `tile_mesh.sh <task-dir> <tiles-dir>`: with `texturing-single-material`, ODM bakes one
+   atlas for the whole field (36k x 40k px at Callis Road) that its own tiler silently fails on.
+   This downsamples the atlas to 16384 px and runs Obj2Tiles with ODM's arguments.
+2. `node fix_tileset_bounds.mjs <tiles-dir>`: Obj2Tiles writes z-up vertices but y-up bounding
+   boxes and no `gltfUpAxis`, so Cesium buries and culls every tile. This declares z-up and
+   remaps the boxes (the original stays as `tileset.odm.json`).
+3. `node optimize_mesh.mjs <tiles-dir> viewer/public/data/<survey>/mesh`: Obj2Tiles repacks
+   coarse tiles into 32768 px atlases (over 4 GB decoded). This caps textures at 1024 / 2048 /
+   4096 px for the coarse / middle / fine levels and encodes WebP: 282 MB down to 79 MB, and the
+   mesh loads in about 3 seconds.
 
 Writes `mesh/` (3D Tiles), `orthophoto.webp`, `dsm.png`, `dtm.png`, `canopy.png`,
 `heights.json` (bounds and ramp ranges), `shots.geojson`, and `bounds.geojson`. The ramp colours
@@ -108,6 +119,12 @@ spills into system memory and training slows from ~25 to ~0.2 steps per second; 
 happens, stop and `--resume` from the last `*_5000.ply`-style checkpoint with a lower cap.
 The Callis run took about 30 minutes with the GPU to itself and finished at 1.5 M Gaussians. Nadir-only photos give a top-down-quality splat; vertical surfaces need an
 oblique pass on the next flight.
+
+The cleanup clips the splat to the measured surface: Gaussians more than 0.75 m above the DSM
+(floaters in the sky) or 1 m below the DTM are dropped, along with near-transparent ones,
+blobs wider than 2.5 m, and "needles" (long on one axis, thin on the other two) that nadir-only
+photos produce. At Callis Road that kept 915k of 1.5M Gaussians and removed every visible
+floater.
 
 Check the result: `build_summary.json` must report a z-up source frame, and a road edge in the
 splat should sit on the mesh with no float or sink.

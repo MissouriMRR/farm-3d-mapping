@@ -4,7 +4,7 @@ import { CALLIS_ROAD_METADATA, type FieldMetadata, type SurveyLayers } from './c
 const GENERATED_SURVEY = {
   id: 'callis-road-2026-08-30',
   name: 'Callis Road (Field 175)',
-  date: 'August 30, 2026',
+  date: 'August 30, 2026 flight',
 } as const
 
 type GdalInfo = { wgs84Extent?: { coordinates: number[][][] } }

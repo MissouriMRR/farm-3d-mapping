@@ -1,0 +1,14 @@
+{
+  "name": "farm-3d-pipeline",
+  "private": true,
+  "type": "module",
+  "description": "Node helpers for the survey pipeline (mesh tileset fixes and texture optimization).",
+  "dependencies": {
+    "@gltf-transform/core": "4.2.1",
+    "@gltf-transform/extensions": "4.2.1",
+    "sharp": "0.34.3"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}
