@@ -1,0 +1,36 @@
+# Serves the viewer only under a private path: https://<host>/<DEMO_TOKEN>/
+# Every other path is a bare 404, so the site can't be found without the link.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	encode zstd gzip
+
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	redir /{$DEMO_TOKEN} /{$DEMO_TOKEN}/ 308
+
+	handle_path /{$DEMO_TOKEN}/* {
+		root * /srv/site
+
+		# Content-hashed build output and survey tiles never change in place.
+		@immutable path /assets/* /cesium/* /data/*
+		header @immutable Cache-Control "public, max-age=604800, immutable"
+		# The page and its runtime config must always be fresh.
+		@fresh path / /index.html /config.json
+		header @fresh Cache-Control "no-cache"
+
+		file_server
+	}
+
+	handle {
+		respond 404
+	}
+}

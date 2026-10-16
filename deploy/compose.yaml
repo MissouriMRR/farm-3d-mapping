@@ -1,0 +1,18 @@
+name: farm-3d-demo
+
+services:
+  viewer:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: farm-3d-demo:latest
+    restart: unless-stopped
+    environment:
+      # The private path segment; the demo link is https://<host>/<DEMO_TOKEN>/
+      DEMO_TOKEN: ${DEMO_TOKEN:?set DEMO_TOKEN in deploy/.env}
+    volumes:
+      # Optional runtime settings (Cesium ion token); see config.example.json.
+      - ./config.json:/srv/site/config.json:ro
+    ports:
+      - "${DEMO_PORT:-8090}:8080"
+    mem_limit: 128m

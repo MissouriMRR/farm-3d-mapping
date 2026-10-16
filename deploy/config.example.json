@@ -1,0 +1,3 @@
+{
+  "cesiumIonToken": "paste a Cesium ion access token here (scopes: assets:read, geocode)"
+}
