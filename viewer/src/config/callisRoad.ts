@@ -3,12 +3,31 @@ export type HeightLayerKey = 'dsm' | 'dtm' | 'canopy'
 /** A colour-ramped height raster rendered by the pipeline; min and max are the ramp ends in metres. */
 export interface HeightRaster {
   url: string
+  /** XYZ tile pyramid (`{z}/{x}/{y}`), preferred over the single image when present. */
+  tilesUrl?: string
   min: number
   max: number
 }
 
+/**
+ * A survey without ground control can sit metres off. This registers it to the basemap:
+ * in local east/north/up metres around `reference`, every survey point moves by
+ * (east, north, up + slopeEast * e + slopeNorth * n).
+ */
+export interface SurveyAlignment {
+  reference: { latitude: number, longitude: number }
+  east: number
+  north: number
+  up: number
+  slopeEast: number
+  slopeNorth: number
+}
+
 /** Products of a full ODM run. Generated files are gitignored; see pipeline/README.md. */
 export interface SurveyLayers {
+  alignment?: SurveyAlignment
+  /** Orthophoto as an XYZ tile pyramid with the alignment baked in (pipeline/tile_imagery.sh). */
+  orthoTilesUrl?: string
   meshUrl?: string
   splatUrl?: string
   heights?: {
@@ -62,7 +81,7 @@ export const CALLIS_ROAD_METADATA: FieldMetadata = {
   },
   // GEOID18 undulation -32.742 m, plus the 1.09 m WGS84 -> NAD83(2011) ellipsoid shift.
   navd88Offset: 33.8,
-  orthophotoUrl: '/data/callis-road/callis_orthophoto.webp',
-  shotsUrl: '/data/callis-road/shots.geojson',
-  boundsUrl: '/data/callis-road/bounds.geojson',
+  orthophotoUrl: 'data/callis-road/callis_orthophoto.webp',
+  shotsUrl: 'data/callis-road/shots.geojson',
+  boundsUrl: 'data/callis-road/bounds.geojson',
 }

@@ -27,6 +27,8 @@ dist-ssr
 # The original Callis Road orthophoto survey stays checked in.
 public/data/*/
 !public/data/callis-road/
+# The demo survey ships via Git LFS (see /.gitattributes and deploy/DEPLOY.md).
+!public/data/callis-road-2026-08-30/
 
 # Raw Large GIS / Drone Datasets
 *.tif

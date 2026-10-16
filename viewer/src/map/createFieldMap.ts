@@ -1,18 +1,43 @@
 import * as Cesium from 'cesium'
 import type { FieldMetadata, HeightLayerKey } from '../config/callisRoad'
+import { isHandheld } from '../config/runtime'
+import { alignmentMatrix, shiftBounds, shiftDegrees } from './alignment'
 import { flyToField, installOrbitControls, type ViewMode } from './camera'
 import { parseFlightShots } from './flightShots'
 
-const BASE_MAP_STYLES = {
-  satellite: Cesium.IonWorldImageryStyle.AERIAL,
-  hybrid: Cesium.IonWorldImageryStyle.AERIAL_WITH_LABELS,
-  road: Cesium.IonWorldImageryStyle.ROAD,
+/**
+ * Satellite sources differ in date, resolution, and georeferencing, so a survey can line up with
+ * one better than another. USGS imagery is USDA NAIP aerial photography in the US.
+ */
+const BASE_MAPS = {
+  usgs: () => Cesium.ArcGisMapServerImageryProvider.fromUrl(
+    'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer',
+  ),
+  bing: () => Cesium.createWorldImageryAsync({ style: Cesium.IonWorldImageryStyle.AERIAL }),
+  esri: () => Cesium.ArcGisMapServerImageryProvider.fromUrl(
+    'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
+  ),
+  road: () => Cesium.createWorldImageryAsync({ style: Cesium.IonWorldImageryStyle.ROAD }),
+} satisfies Record<string, () => Promise<Cesium.ImageryProvider>>
+
+export type BaseMap = keyof typeof BASE_MAPS
+
+/**
+ * Colour correction toward the drone imagery, measured as mean colour over the same field at
+ * Callis Road (drone RGB 121/120/99, saturation 0.22): USGS matched as-is, Bing was ~40% darker
+ * and flatter, Esri brighter and more saturated. Keeps the seam at the survey edge quiet.
+ */
+const BASE_MAP_GRADE: Record<BaseMap, { brightness?: number, saturation?: number }> = {
+  usgs: {},
+  bing: { brightness: 1.65, saturation: 1.55 },
+  esri: { brightness: 0.82, saturation: 0.7 },
+  road: {},
 }
 
 export type HeightLayerChoice = HeightLayerKey | 'none'
 
 export type MapSettings = {
-  baseMap: keyof typeof BASE_MAP_STYLES
+  baseMap: BaseMap
   orthoVisible: boolean
   opacity: number
   flightPathVisible: boolean
@@ -23,7 +48,7 @@ export type MapSettings = {
 }
 
 export const DEFAULT_MAP_SETTINGS: MapSettings = {
-  baseMap: 'satellite',
+  baseMap: 'usgs',
   orthoVisible: true,
   opacity: 1,
   flightPathVisible: false,
@@ -34,10 +59,12 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
 }
 
 /**
- * ODM's boundary is the hull of the whole point cloud, a little wider than the textured mesh.
- * Cutting terrain to the full hull leaves see-through slivers at the edges, so cut slightly inside.
+ * World terrain is cut out inside the field so it can never poke through the survey (the two
+ * surfaces sit within centimetres, and Cesium's terrain is coarser). The cut stays this far
+ * inside the boundary, so at the ragged edges the orthophoto-draped terrain still fills in
+ * underneath the mesh and splat.
  */
-const TERRAIN_CUT_INSET_M = 20
+const TERRAIN_CUT_INSET_M = 25
 
 /** Pulls each vertex of a lon/lat ring toward its centroid by `metres`; returns a flat lon/lat array. */
 function insetRing(ring: number[][], metres: number): number[] {
@@ -65,16 +92,24 @@ type FieldMapOptions = {
   container: HTMLElement
   credits: HTMLElement
   field: FieldMetadata
+  /** Cesium ion token from config.json; falls back to the build-time VITE_CESIUM_ION_TOKEN. */
+  ionToken?: string
   onOrthophotoLoaded: () => void
+  onMeshLoaded: () => void
   onHeightPicked: (picked: PickedHeight | null) => void
 }
 
 /** Owns Cesium resources and asynchronous layers for one mounted map. */
 export function createFieldMap({
-  container, credits, field, onOrthophotoLoaded, onHeightPicked,
+  container, credits, field, ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN,
+  onOrthophotoLoaded, onMeshLoaded, onHeightPicked,
 }: FieldMapOptions) {
-  const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN
   if (ionToken) Cesium.Ion.defaultAccessToken = ionToken
+  // Phones get coarser detail levels: less to download, less GPU memory.
+  const screenSpaceError = isHandheld() ? 24 : 16
+
+  // Debug mode (dev, or ?debug in production) exposes the viewer and keeps frames readable.
+  const debug = import.meta.env.DEV || new URLSearchParams(location.search).has('debug')
 
   const viewer = new Cesium.Viewer(container, {
     timeline: false,
@@ -97,15 +132,29 @@ export function createFieldMap({
     requestRenderMode: true,
     maximumRenderTimeChange: Infinity,
     msaaSamples: 1,
+    contextOptions: debug ? { webgl: { preserveDrawingBuffer: true } } : undefined,
   })
 
   // Trade a little tile detail for smoother navigation, and retain visited tiles.
   viewer.scene.globe.maximumScreenSpaceError = 3
   viewer.scene.globe.tileCacheSize = 1000
   viewer.scene.globe.depthTestAgainstTerrain = true
+  // While imagery streams in, show an earth tone (not Cesium's blue) and keep coarser parent and
+  // neighbouring tiles ready so there are no empty holes when panning and zooming.
+  viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#4a4a3c')
+  viewer.scene.globe.preloadAncestors = true
+  viewer.scene.globe.preloadSiblings = true
+  viewer.scene.globe.tileCacheSize = 2000
+  // Inside the terrain cut, anything the survey doesn't cover shows soil-coloured ground (the
+  // globe's underside) rather than the starfield.
+  viewer.scene.globe.backFaceCulling = false
+  viewer.scene.globe.undergroundColor = Cesium.Color.fromCssColorString('#4a4a3c')
+
+  // Registration of the survey to the basemap (see SurveyAlignment); identity when absent.
+  const alignment = field.layers?.alignment
+  const surveyToWorld = alignmentMatrix(alignment)
   const removeOrbitControls = installOrbitControls(viewer)
-  // Dev-only handle for inspecting layers from the browser console.
-  if (import.meta.env.DEV) Object.assign(window, { fieldViewer: viewer })
+  if (debug) Object.assign(window, { fieldViewer: viewer })
 
   let settings = DEFAULT_MAP_SETTINGS
   let baseLayer: Cesium.ImageryLayer | undefined
@@ -114,11 +163,24 @@ export function createFieldMap({
   let flightPoints: Cesium.PointPrimitiveCollection | undefined
   let boundary: Cesium.GeoJsonDataSource | undefined
   let mesh: Cesium.Cesium3DTileset | undefined
-  let splat: Cesium.Cesium3DTileset | undefined
   let terrainCut: Cesium.ClippingPolygonCollection | undefined
+  let splat: Cesium.Cesium3DTileset | undefined
   const heightOverlays = new Map<HeightLayerKey, Cesium.ImageryLayer>()
   const pickMarker = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection()) as Cesium.PointPrimitiveCollection
   const requests = new AbortController()
+
+  /**
+   * Survey imagery as a provider: a tile pyramid when the pipeline cut one (fast to pan and zoom),
+   * otherwise one large image. Tiles already carry the alignment shift; the rectangle only
+   * stops Cesium requesting tiles outside the survey.
+   */
+  function surveyImagery(tilesUrl: string | undefined, imageUrl: string, bounds: FieldMetadata['bounds'], maximumLevel: number) {
+    const { west, south, east, north } = shiftBounds(alignment, bounds)
+    const rectangle = Cesium.Rectangle.fromDegrees(west, south, east, north)
+    return tilesUrl
+      ? Promise.resolve(new Cesium.UrlTemplateImageryProvider({ url: tilesUrl, rectangle, minimumLevel: 14, maximumLevel }))
+      : Cesium.SingleTileImageryProvider.fromUrl(imageUrl, { rectangle })
+  }
 
   /** Height maps are 2D products draped on the ground, the same way the orthophoto is. */
   function heightOverlay(key: HeightLayerKey) {
@@ -127,13 +189,7 @@ export function createFieldMap({
     if (!raster || !bounds) return undefined
     let layer = heightOverlays.get(key)
     if (!layer) {
-      const { west, south, east, north } = bounds
-      layer = Cesium.ImageryLayer.fromProviderAsync(
-        Cesium.SingleTileImageryProvider.fromUrl(raster.url, {
-          rectangle: Cesium.Rectangle.fromDegrees(west, south, east, north),
-        }),
-        {},
-      )
+      layer = Cesium.ImageryLayer.fromProviderAsync(surveyImagery(raster.tilesUrl, raster.url, bounds, 19), {})
       viewer.imageryLayers.add(layer)
       heightOverlays.set(key, layer)
     }
@@ -141,7 +197,7 @@ export function createFieldMap({
   }
 
   function applyLayerSettings() {
-    // A height map lies on the ground, so the mesh (and its terrain cut) steps aside while one is on.
+    // A height map lies on the ground, so the mesh steps aside while one is on.
     const meshShown = Boolean(mesh) && settings.meshVisible && settings.heightLayer === 'none'
     if (orthophoto) {
       orthophoto.show = settings.orthoVisible
@@ -151,8 +207,8 @@ export function createFieldMap({
     if (flightPoints) flightPoints.show = settings.flightPathVisible
     if (boundary) boundary.show = settings.boundaryVisible
     if (mesh) mesh.show = meshShown
-    // The mesh carries the field's real surface, so world terrain is cut out beneath it.
-    if (terrainCut) terrainCut.enabled = meshShown
+    // Either 3D layer shown: keep terrain from occluding it inside the field.
+    if (terrainCut) terrainCut.enabled = meshShown || Boolean(splat && settings.splatVisible)
     if (splat) splat.show = settings.splatVisible
 
     for (const layer of heightOverlays.values()) layer.show = false
@@ -161,15 +217,13 @@ export function createFieldMap({
       if (overlay) overlay.show = true
     }
 
-    // Splats re-sort every frame as the camera moves; render-on-demand would leave them stale.
-    viewer.scene.requestRenderMode = !(splat && settings.splatVisible)
     viewer.scene.requestRender()
   }
 
   function setBaseMap() {
     const next = Cesium.ImageryLayer.fromProviderAsync(
-      Cesium.createWorldImageryAsync({ style: BASE_MAP_STYLES[settings.baseMap] }),
-      {},
+      BASE_MAPS[settings.baseMap](),
+      BASE_MAP_GRADE[settings.baseMap],
     )
     viewer.imageryLayers.add(next, 0)
     if (baseLayer) viewer.imageryLayers.remove(baseLayer, true)
@@ -177,10 +231,7 @@ export function createFieldMap({
   }
 
   async function loadOrthophoto() {
-    const { west, south, east, north } = field.bounds
-    const provider = await Cesium.SingleTileImageryProvider.fromUrl(field.orthophotoUrl, {
-      rectangle: Cesium.Rectangle.fromDegrees(west, south, east, north),
-    })
+    const provider = await surveyImagery(field.layers?.orthoTilesUrl, field.orthophotoUrl, field.bounds, 21)
     if (viewer.isDestroyed()) return
 
     orthophoto = viewer.imageryLayers.addImageryProvider(provider)
@@ -195,7 +246,7 @@ export function createFieldMap({
     if (viewer.isDestroyed()) return
 
     const positions = parseFlightShots(data).map(({ coordinates }) =>
-      Cesium.Cartesian3.fromDegrees(...coordinates),
+      Cesium.Matrix4.multiplyByPoint(surveyToWorld, Cesium.Cartesian3.fromDegrees(...coordinates), new Cesium.Cartesian3()),
     )
 
     flightPath = viewer.entities.add({
@@ -225,8 +276,31 @@ export function createFieldMap({
     applyLayerSettings()
   }
 
+  type BoundaryGeoJson = {
+    type: string
+    features: { geometry: { type: string; coordinates: number[][][] | number[][][][] } }[]
+  }
+  let boundaryRequest: Promise<BoundaryGeoJson> | undefined
+
+  /** The field boundary, shifted horizontally by the survey alignment. Fetched once. */
+  function fetchBoundary() {
+    boundaryRequest ??= (async () => {
+      const response = await fetch(field.boundsUrl, { signal: requests.signal })
+      if (!response.ok) throw new Error(`Field boundary request failed (${response.status})`)
+      const geojson = await response.json() as BoundaryGeoJson
+      const shiftRing = (ring: number[][]) => ring.map(([lon, lat, ...rest]) => [...shiftDegrees(alignment, lon, lat), ...rest])
+      for (const { geometry } of geojson.features) {
+        geometry.coordinates = geometry.type === 'MultiPolygon'
+          ? (geometry.coordinates as number[][][][]).map(polygon => polygon.map(shiftRing))
+          : (geometry.coordinates as number[][][]).map(shiftRing)
+      }
+      return geojson
+    })()
+    return boundaryRequest
+  }
+
   async function loadBoundary() {
-    const source = await Cesium.GeoJsonDataSource.load(field.boundsUrl, {
+    const source = await Cesium.GeoJsonDataSource.load(await fetchBoundary(), {
       stroke: Cesium.Color.fromCssColorString('#10b981'),
       strokeWidth: 3,
       fill: Cesium.Color.fromCssColorString('#10b981').withAlpha(0.12),
@@ -240,15 +314,9 @@ export function createFieldMap({
     applyLayerSettings()
   }
 
-  /** Cuts world terrain (and the imagery draped on it) inside the field boundary. */
   async function cutTerrainUnderField() {
-    const response = await fetch(field.boundsUrl, { signal: requests.signal })
-    if (!response.ok) throw new Error(`Field boundary request failed (${response.status})`)
-    const geojson = await response.json() as {
-      features: { geometry: { type: string; coordinates: number[][][] | number[][][][] } }[]
-    }
+    const geojson = await fetchBoundary()
     if (viewer.isDestroyed()) return
-
     const polygons = geojson.features.flatMap(({ geometry }) => {
       const rings = geometry.type === 'MultiPolygon'
         ? (geometry.coordinates as number[][][][]).map(polygon => polygon[0])
@@ -263,20 +331,33 @@ export function createFieldMap({
   }
 
   async function loadMesh(url: string) {
-    // ODM writes the mesh in WGS84 ellipsoidal heights, the same frame as Cesium terrain: no offset.
+    // ODM writes the mesh in WGS84 ellipsoidal heights, the same frame as Cesium terrain; the
+    // alignment then corrects the survey's own GPS error (no ground control).
     const tileset = await Cesium.Cesium3DTileset.fromUrl(url, {
-      maximumScreenSpaceError: 16,
-      // Mesh tiles carry large texture atlases; bound what stays cached on the GPU.
-      cacheBytes: 768 * 1024 * 1024,
+      maximumScreenSpaceError: screenSpaceError,
+      // Bound what stays cached on the GPU; phones get a smaller budget.
+      cacheBytes: (isHandheld() ? 256 : 768) * 1024 * 1024,
     })
     if (viewer.isDestroyed()) return
+    tileset.modelMatrix = surveyToWorld
     mesh = viewer.scene.primitives.add(tileset) as Cesium.Cesium3DTileset
-    await cutTerrainUnderField()
+    const removeListener = tileset.initialTilesLoaded.addEventListener(() => {
+      removeListener()
+      onMeshLoaded()
+    })
+    applyLayerSettings()
   }
 
   async function loadSplat(url: string) {
-    const tileset = await Cesium.Cesium3DTileset.fromUrl(url)
+    const tileset = await Cesium.Cesium3DTileset.fromUrl(url, {
+      maximumScreenSpaceError: screenSpaceError,
+      // Coarser splat levels while the camera moves; full detail once it settles.
+      dynamicScreenSpaceError: true,
+      cullRequestsWhileMoving: true,
+      cacheBytes: (isHandheld() ? 256 : 768) * 1024 * 1024,
+    })
     if (viewer.isDestroyed()) return
+    tileset.modelMatrix = surveyToWorld
     splat = viewer.scene.primitives.add(tileset) as Cesium.Cesium3DTileset
     applyLayerSettings()
   }
@@ -307,6 +388,23 @@ export function createFieldMap({
     }
   }
 
+  // Render only when something changes. A splat sorts its Gaussians asynchronously after the
+  // camera moves, so keep drawing briefly after each move to show the settled sort.
+  let settleUntil = 0
+  const settle = () => {
+    if (performance.now() < settleUntil || viewer.isDestroyed()) {
+      viewer.scene.requestRender()
+      requestAnimationFrame(settle)
+    }
+  }
+  viewer.camera.percentageChanged = 0.01
+  const removeCameraListener = viewer.camera.changed.addEventListener(() => {
+    if (!splat?.show) return
+    const running = performance.now() < settleUntil
+    settleUntil = performance.now() + 600
+    if (!running) requestAnimationFrame(settle)
+  })
+
   const clicks = new Cesium.ScreenSpaceEventHandler(viewer.canvas)
   clicks.setInputAction(({ position }: { position: Cesium.Cartesian2 }) => {
     const reading = pickHeight(position)
@@ -335,6 +433,9 @@ export function createFieldMap({
   void loadOrthophoto().catch(error => reportLoadFailure('orthophoto', error))
   void loadFlightPath().catch(error => reportLoadFailure('flight path', error))
   void loadBoundary().catch(error => reportLoadFailure('field boundary', error))
+  if (field.layers?.meshUrl || field.layers?.splatUrl) {
+    void cutTerrainUnderField().catch(error => reportLoadFailure('terrain cut', error))
+  }
   if (field.layers?.meshUrl) {
     void loadMesh(field.layers.meshUrl).catch(error => reportLoadFailure('mesh', error))
   }
@@ -360,6 +461,7 @@ export function createFieldMap({
     destroy() {
       requests.abort()
       clicks.destroy()
+      removeCameraListener()
       removeOrbitControls()
       if (!viewer.isDestroyed()) viewer.destroy()
     },

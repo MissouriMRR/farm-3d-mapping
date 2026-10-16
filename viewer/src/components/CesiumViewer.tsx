@@ -6,7 +6,7 @@ import './CesiumViewer.css'
 
 export default function CesiumViewer() {
   const {
-    containerRef, creditRef, isLoaded, settings,
+    containerRef, creditRef, isLoaded, isMeshLoaded, settings,
     updateSettings, viewMode, flyToField, pickedHeight, clearPick, survey,
   } = useFieldMap()
   // Until the active survey resolves, the panel describes the checked-in one.
@@ -48,8 +48,20 @@ export default function CesiumViewer() {
             )}
           </button>
           <div className="status" role="status">
-            <span className={`status-dot ${isLoaded ? 'active' : 'loading'}`} />
-            {isLoaded ? 'Orthophoto Draped' : 'Loading Orthophoto...'}
+            {(() => {
+              // A 3D survey is ready once its mesh's first view has loaded; otherwise the orthophoto.
+              const has3d = Boolean(layers?.meshUrl)
+              const ready = has3d ? isMeshLoaded : isLoaded
+              const label = has3d
+                ? (ready ? '3D survey ready' : 'Loading 3D survey…')
+                : (ready ? 'Orthophoto Draped' : 'Loading Orthophoto...')
+              return (
+                <>
+                  <span className={`status-dot ${ready ? 'active' : 'loading'}`} />
+                  {label}
+                </>
+              )
+            })()}
           </div>
         </header>
 
@@ -154,8 +166,9 @@ export default function CesiumViewer() {
           <div className="segmented" role="group" aria-label="Base Map">
             {(
               [
-                ['satellite', 'Satellite'],
-                ['hybrid', 'Hybrid'],
+                ['usgs', 'USGS'],
+                ['bing', 'Bing'],
+                ['esri', 'Esri'],
                 ['road', 'Road'],
               ] as const
             ).map(([value, label]) => (

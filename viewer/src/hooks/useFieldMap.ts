@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FieldMetadata } from '../config/callisRoad'
+import { isHandheld, loadRuntimeConfig, type RuntimeConfig } from '../config/runtime'
 import { resolveActiveSurvey } from '../config/surveys'
 import {
   createFieldMap, DEFAULT_MAP_SETTINGS, type MapSettings, type PickedHeight,
@@ -13,17 +14,24 @@ export function useFieldMap() {
   const settingsRef = useRef(DEFAULT_MAP_SETTINGS)
   const [settings, setSettings] = useState(DEFAULT_MAP_SETTINGS)
   const [survey, setSurvey] = useState<FieldMetadata | null>(null)
+  const [runtime, setRuntime] = useState<RuntimeConfig>({})
   const [isLoaded, setIsLoaded] = useState(false)
+  const [isMeshLoaded, setIsMeshLoaded] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('3d')
   const [pickedHeight, setPickedHeight] = useState<PickedHeight | null>(null)
 
   useEffect(() => {
     const requests = new AbortController()
-    void resolveActiveSurvey(requests.signal).then(next => {
-      // A survey with a splat opens on it: it is the most legible first view of the field.
-      if (next.layers?.splatUrl) setSettings(current => ({ ...current, splatVisible: true }))
-      setSurvey(next)
-    })
+    void Promise.all([resolveActiveSurvey(requests.signal), loadRuntimeConfig(requests.signal)])
+      .then(([next, config]) => {
+        // On desktop a survey with a splat opens on it, the most legible first view of the
+        // field; phones open on the lighter mesh and load the splat only when it is switched on.
+        if (next.layers?.splatUrl && !isHandheld()) {
+          setSettings(current => ({ ...current, splatVisible: true }))
+        }
+        setRuntime(config)
+        setSurvey(next)
+      })
     return () => requests.abort()
   }, [])
 
@@ -34,7 +42,9 @@ export function useFieldMap() {
       container: containerRef.current,
       credits: creditRef.current,
       field: survey,
+      ionToken: runtime.cesiumIonToken,
       onOrthophotoLoaded: () => setIsLoaded(true),
+      onMeshLoaded: () => setIsMeshLoaded(true),
       onHeightPicked: setPickedHeight,
     })
     map.update(settingsRef.current)
@@ -44,7 +54,7 @@ export function useFieldMap() {
       map.destroy()
       mapRef.current = null
     }
-  }, [survey])
+  }, [survey, runtime])
 
   useEffect(() => {
     settingsRef.current = settings
@@ -66,7 +76,7 @@ export function useFieldMap() {
   }
 
   return {
-    containerRef, creditRef, survey, isLoaded, settings, updateSettings, viewMode, flyToField,
+    containerRef, creditRef, survey, isLoaded, isMeshLoaded, settings, updateSettings, viewMode, flyToField,
     pickedHeight, clearPick,
   }
 }
