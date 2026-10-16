@@ -19,13 +19,18 @@ Callis Road (Field 175), from the 2026-08-30 drone flight:
 ```bash
 git clone --branch feat/height-and-splat-layers https://github.com/MissouriMRR/farm-3d-mapping.git
 cd farm-3d-mapping
-git lfs install && git lfs pull        # survey data: viewer/public/data/callis-road-2026-08-30
 ```
 
-The survey data lives in Git LFS. GitHub's free tier covers it: about 110 MB stored, and about
-110 MB per clone. **Clone once and keep the checkout**, rather than re-cloning on every deploy.
-If the MissouriMRR org has an LFS spending limit above $0, check with a repo admin. GitHub's
-default is $0, which blocks rather than charges if a quota is ever reached.
+The survey data (about 110 MB: mesh, splat, imagery tiles) is not in git. The MissouriMRR repo
+has Git LFS disabled, and committing it as plain files would bloat the team repo's history for
+good. Parker serves one archive from his PC over the tailnet and hands over the link and its
+SHA-256 checksum:
+
+```bash
+curl -fo /tmp/callis-road-2026-08-30.tar "<link from Parker>"
+echo "<sha256 from Parker>  /tmp/callis-road-2026-08-30.tar" | sha256sum -c -
+tar -xf /tmp/callis-road-2026-08-30.tar -C viewer/public/data/   # creates callis-road-2026-08-30/
+```
 
 ## 2. Pick the private link and settings
 
@@ -58,7 +63,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://localhost:8090/$(grep DEMO_TOKE
 ```
 
 The image is about 400 MB (Node build stage discarded; Caddy plus the built site). The build
-fails loudly if the LFS data wasn't pulled.
+fails loudly if the survey data wasn't unpacked.
 
 ## 4. Route it
 
@@ -78,6 +83,6 @@ path is the lock, so the supervisor can open the link on a phone with no account
 
 ## Updating
 
-Pull the branch (`git pull && git lfs pull`), then `docker compose up -d --build`. The pipeline
-that regenerates the survey data from drone photos is in `pipeline/README.md`; it needs a
-CUDA GPU (Parker's PC), not this host.
+Pull the branch (`git pull`), replace the survey data if a new archive was published, then
+`docker compose up -d --build`. The pipeline that regenerates the survey data from drone
+photos is in `pipeline/README.md`; it needs a CUDA GPU (Parker's PC), not this host.
