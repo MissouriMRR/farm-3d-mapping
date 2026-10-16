@@ -1,5 +1,5 @@
 import * as Cesium from 'cesium'
-import type { FieldMetadata } from '../config/callisRoad'
+import type { FieldMetadata, HeightLayerKey } from '../config/callisRoad'
 import { flyToField, installOrbitControls, type ViewMode } from './camera'
 import { parseFlightShots } from './flightShots'
 
@@ -9,12 +9,17 @@ const BASE_MAP_STYLES = {
   road: Cesium.IonWorldImageryStyle.ROAD,
 }
 
+export type HeightLayerChoice = HeightLayerKey | 'none'
+
 export type MapSettings = {
   baseMap: keyof typeof BASE_MAP_STYLES
   orthoVisible: boolean
   opacity: number
   flightPathVisible: boolean
   boundaryVisible: boolean
+  meshVisible: boolean
+  splatVisible: boolean
+  heightLayer: HeightLayerChoice
 }
 
 export const DEFAULT_MAP_SETTINGS: MapSettings = {
@@ -23,6 +28,17 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
   opacity: 1,
   flightPathVisible: false,
   boundaryVisible: false,
+  meshVisible: true,
+  splatVisible: false,
+  heightLayer: 'none',
+}
+
+/** A height read at a clicked point, always in the WGS84 ellipsoidal frame. */
+export type PickedHeight = {
+  longitude: number
+  latitude: number
+  ellipsoidalHeight: number
+  source: 'mesh' | 'terrain'
 }
 
 type FieldMapOptions = {
@@ -30,10 +46,13 @@ type FieldMapOptions = {
   credits: HTMLElement
   field: FieldMetadata
   onOrthophotoLoaded: () => void
+  onHeightPicked: (picked: PickedHeight | null) => void
 }
 
 /** Owns Cesium resources and asynchronous layers for one mounted map. */
-export function createFieldMap({ container, credits, field, onOrthophotoLoaded }: FieldMapOptions) {
+export function createFieldMap({
+  container, credits, field, onOrthophotoLoaded, onHeightPicked,
+}: FieldMapOptions) {
   const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN
   if (ionToken) Cesium.Ion.defaultAccessToken = ionToken
 
@@ -48,6 +67,8 @@ export function createFieldMap({ container, credits, field, onOrthophotoLoaded }
     sceneModePicker: false,
     navigationHelpButton: false,
     fullscreenButton: false,
+    selectionIndicator: false,
+    infoBox: false,
     creditContainer: credits,
     terrain: Cesium.Terrain.fromWorldTerrain({
       requestVertexNormals: false,
@@ -63,6 +84,8 @@ export function createFieldMap({ container, credits, field, onOrthophotoLoaded }
   viewer.scene.globe.tileCacheSize = 1000
   viewer.scene.globe.depthTestAgainstTerrain = true
   const removeOrbitControls = installOrbitControls(viewer)
+  // Dev-only handle for inspecting layers from the browser console.
+  if (import.meta.env.DEV) Object.assign(window, { fieldViewer: viewer })
 
   let settings = DEFAULT_MAP_SETTINGS
   let baseLayer: Cesium.ImageryLayer | undefined
@@ -70,9 +93,36 @@ export function createFieldMap({ container, credits, field, onOrthophotoLoaded }
   let flightPath: Cesium.Entity | undefined
   let flightPoints: Cesium.PointPrimitiveCollection | undefined
   let boundary: Cesium.GeoJsonDataSource | undefined
+  let mesh: Cesium.Cesium3DTileset | undefined
+  let splat: Cesium.Cesium3DTileset | undefined
+  let terrainCut: Cesium.ClippingPolygonCollection | undefined
+  const heightOverlays = new Map<HeightLayerKey, Cesium.ImageryLayer>()
+  const pickMarker = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection()) as Cesium.PointPrimitiveCollection
   const requests = new AbortController()
 
+  /** Height maps are 2D products draped on the ground, the same way the orthophoto is. */
+  function heightOverlay(key: HeightLayerKey) {
+    const raster = field.layers?.heights?.[key]
+    const bounds = field.layers?.heights?.bounds
+    if (!raster || !bounds) return undefined
+    let layer = heightOverlays.get(key)
+    if (!layer) {
+      const { west, south, east, north } = bounds
+      layer = Cesium.ImageryLayer.fromProviderAsync(
+        Cesium.SingleTileImageryProvider.fromUrl(raster.url, {
+          rectangle: Cesium.Rectangle.fromDegrees(west, south, east, north),
+        }),
+        {},
+      )
+      viewer.imageryLayers.add(layer)
+      heightOverlays.set(key, layer)
+    }
+    return layer
+  }
+
   function applyLayerSettings() {
+    // A height map lies on the ground, so the mesh (and its terrain cut) steps aside while one is on.
+    const meshShown = Boolean(mesh) && settings.meshVisible && settings.heightLayer === 'none'
     if (orthophoto) {
       orthophoto.show = settings.orthoVisible
       orthophoto.alpha = settings.opacity
@@ -80,6 +130,19 @@ export function createFieldMap({ container, credits, field, onOrthophotoLoaded }
     if (flightPath) flightPath.show = settings.flightPathVisible
     if (flightPoints) flightPoints.show = settings.flightPathVisible
     if (boundary) boundary.show = settings.boundaryVisible
+    if (mesh) mesh.show = meshShown
+    // The mesh carries the field's real surface, so world terrain is cut out beneath it.
+    if (terrainCut) terrainCut.enabled = meshShown
+    if (splat) splat.show = settings.splatVisible
+
+    for (const layer of heightOverlays.values()) layer.show = false
+    if (settings.heightLayer !== 'none') {
+      const overlay = heightOverlay(settings.heightLayer)
+      if (overlay) overlay.show = true
+    }
+
+    // Splats re-sort every frame as the camera moves; render-on-demand would leave them stale.
+    viewer.scene.requestRenderMode = !(splat && settings.splatVisible)
     viewer.scene.requestRender()
   }
 
@@ -157,6 +220,91 @@ export function createFieldMap({ container, credits, field, onOrthophotoLoaded }
     applyLayerSettings()
   }
 
+  /** Cuts world terrain (and the imagery draped on it) inside the field boundary. */
+  async function cutTerrainUnderField() {
+    const response = await fetch(field.boundsUrl, { signal: requests.signal })
+    if (!response.ok) throw new Error(`Field boundary request failed (${response.status})`)
+    const geojson = await response.json() as {
+      features: { geometry: { type: string; coordinates: number[][][] | number[][][][] } }[]
+    }
+    if (viewer.isDestroyed()) return
+
+    const polygons = geojson.features.flatMap(({ geometry }) => {
+      const rings = geometry.type === 'MultiPolygon'
+        ? (geometry.coordinates as number[][][][]).map(polygon => polygon[0])
+        : [(geometry.coordinates as number[][][])[0]]
+      return rings.map(ring => new Cesium.ClippingPolygon({
+        positions: Cesium.Cartesian3.fromDegreesArray(ring.flatMap(([lon, lat]) => [lon, lat])),
+      }))
+    })
+    terrainCut = new Cesium.ClippingPolygonCollection({ polygons, enabled: false })
+    viewer.scene.globe.clippingPolygons = terrainCut
+    applyLayerSettings()
+  }
+
+  async function loadMesh(url: string) {
+    // ODM writes the mesh in WGS84 ellipsoidal heights, the same frame as Cesium terrain: no offset.
+    const tileset = await Cesium.Cesium3DTileset.fromUrl(url, {
+      maximumScreenSpaceError: 16,
+      // Mesh tiles carry large texture atlases; bound what stays cached on the GPU.
+      cacheBytes: 768 * 1024 * 1024,
+    })
+    if (viewer.isDestroyed()) return
+    mesh = viewer.scene.primitives.add(tileset) as Cesium.Cesium3DTileset
+    await cutTerrainUnderField()
+  }
+
+  async function loadSplat(url: string) {
+    const tileset = await Cesium.Cesium3DTileset.fromUrl(url)
+    if (viewer.isDestroyed()) return
+    splat = viewer.scene.primitives.add(tileset) as Cesium.Cesium3DTileset
+    applyLayerSettings()
+  }
+
+  function pickHeight(position: Cesium.Cartesian2): PickedHeight | null {
+    const { scene } = viewer
+    let world: Cesium.Cartesian3 | undefined
+    let source: PickedHeight['source'] = 'terrain'
+
+    // Splats cannot be depth-picked, so readings come from the mesh where it is shown.
+    const picked = scene.pick(position)
+    if (mesh?.show && picked && (picked as { primitive?: unknown }).primitive === mesh) {
+      world = scene.pickPosition(position)
+      source = 'mesh'
+    }
+    if (!world) {
+      const ray = viewer.camera.getPickRay(position)
+      world = ray ? scene.globe.pick(ray, scene) : undefined
+    }
+    if (!world) return null
+
+    const carto = Cesium.Cartographic.fromCartesian(world)
+    return {
+      longitude: Cesium.Math.toDegrees(carto.longitude),
+      latitude: Cesium.Math.toDegrees(carto.latitude),
+      ellipsoidalHeight: carto.height,
+      source,
+    }
+  }
+
+  const clicks = new Cesium.ScreenSpaceEventHandler(viewer.canvas)
+  clicks.setInputAction(({ position }: { position: Cesium.Cartesian2 }) => {
+    const reading = pickHeight(position)
+    pickMarker.removeAll()
+    if (reading) {
+      pickMarker.add({
+        position: Cesium.Cartesian3.fromDegrees(reading.longitude, reading.latitude, reading.ellipsoidalHeight),
+        pixelSize: 9,
+        color: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.fromCssColorString('#181a1b'),
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      })
+    }
+    viewer.scene.requestRender()
+    onHeightPicked(reading)
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
+
   function reportLoadFailure(layer: string, error: unknown) {
     if (!viewer.isDestroyed()) console.warn(`Failed to load ${layer}:`, error)
   }
@@ -167,6 +315,12 @@ export function createFieldMap({ container, credits, field, onOrthophotoLoaded }
   void loadOrthophoto().catch(error => reportLoadFailure('orthophoto', error))
   void loadFlightPath().catch(error => reportLoadFailure('flight path', error))
   void loadBoundary().catch(error => reportLoadFailure('field boundary', error))
+  if (field.layers?.meshUrl) {
+    void loadMesh(field.layers.meshUrl).catch(error => reportLoadFailure('mesh', error))
+  }
+  if (field.layers?.splatUrl) {
+    void loadSplat(field.layers.splatUrl).catch(error => reportLoadFailure('splat', error))
+  }
 
   return {
     update(next: MapSettings) {
@@ -179,8 +333,13 @@ export function createFieldMap({ container, credits, field, onOrthophotoLoaded }
     flyToField(mode: ViewMode) {
       if (!viewer.isDestroyed()) flyToField(viewer, field.bounds, mode)
     },
+    clearPick() {
+      pickMarker.removeAll()
+      viewer.scene.requestRender()
+    },
     destroy() {
       requests.abort()
+      clicks.destroy()
       removeOrbitControls()
       if (!viewer.isDestroyed()) viewer.destroy()
     },

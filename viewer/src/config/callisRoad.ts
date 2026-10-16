@@ -1,3 +1,21 @@
+export type HeightLayerKey = 'dsm' | 'dtm' | 'canopy'
+
+/** A colour-ramped height raster rendered by the pipeline; min and max are the ramp ends in metres. */
+export interface HeightRaster {
+  url: string
+  min: number
+  max: number
+}
+
+/** Products of a full ODM run. Generated files are gitignored; see pipeline/README.md. */
+export interface SurveyLayers {
+  meshUrl?: string
+  splatUrl?: string
+  heights?: {
+    bounds: FieldMetadata['bounds']
+  } & Partial<Record<HeightLayerKey, HeightRaster>>
+}
+
 export interface FieldMetadata {
   name: string
   date: string
@@ -13,11 +31,15 @@ export interface FieldMetadata {
   center: {
     longitude: number
     latitude: number
+    /** Meters, WGS84 ellipsoidal height (the frame ODM and Cesium share). */
     elevation: number
   }
+  /** Meters added to an ellipsoidal height to get NAVD88; constant to within millimetres over the field. */
+  navd88Offset: number
   orthophotoUrl: string
   shotsUrl: string
   boundsUrl: string
+  layers?: SurveyLayers
 }
 
 export const CALLIS_ROAD_METADATA: FieldMetadata = {
@@ -25,7 +47,8 @@ export const CALLIS_ROAD_METADATA: FieldMetadata = {
   date: 'September 4, 2026',
   gsd: '5.0 cm/px',
   shotsCount: 393,
-  flightAltitude: '~50m AGL (266m MSL)',
+  // 266 m ellipsoidal flight altitude; ground at the field center is about 209.5 m ellipsoidal.
+  flightAltitude: '~57 m AGL at center (≈ 300 m NAVD88)',
   bounds: {
     west: -93.27553855376439,
     south: 38.784307630549215,
@@ -35,8 +58,10 @@ export const CALLIS_ROAD_METADATA: FieldMetadata = {
   center: {
     longitude: -93.274094,
     latitude: 38.785977,
-    elevation: 215, // meters MSL
+    elevation: 215, // ODM point-cloud mean, including crops and trees
   },
+  // GEOID18 undulation -32.742 m, plus the 1.09 m WGS84 -> NAD83(2011) ellipsoid shift.
+  navd88Offset: 33.8,
   orthophotoUrl: '/data/callis-road/callis_orthophoto.webp',
   shotsUrl: '/data/callis-road/shots.geojson',
   boundsUrl: '/data/callis-road/bounds.geojson',
