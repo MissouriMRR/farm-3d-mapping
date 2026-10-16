@@ -23,12 +23,12 @@ cd farm-3d-mapping
 
 The survey data (about 110 MB: mesh, splat, imagery tiles) is not in git. The MissouriMRR repo
 has Git LFS disabled, and committing it as plain files would bloat the team repo's history for
-good. Parker serves one archive from his PC over the tailnet and hands over the link and its
-SHA-256 checksum:
+good. It is on Parker's Nextcloud (cloud.petalcat.dev) in the `farm-3d-mapping` folder, as 12
+parts plus a README; Parker shares the folder. Rejoin, verify, and unpack:
 
 ```bash
-curl -fo /tmp/callis-road-2026-08-30.tar "<link from Parker>"
-echo "<sha256 from Parker>  /tmp/callis-road-2026-08-30.tar" | sha256sum -c -
+cat callis-road-2026-08-30.tar.part* > /tmp/callis-road-2026-08-30.tar
+echo "4f80d7071e969a6ce49e46b67a5344d985d771e7782afa7c7f2955c31f2b806d  /tmp/callis-road-2026-08-30.tar" | sha256sum -c -
 tar -xf /tmp/callis-road-2026-08-30.tar -C viewer/public/data/   # creates callis-road-2026-08-30/
 ```
 
