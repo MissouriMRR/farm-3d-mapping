@@ -335,6 +335,8 @@ export function createFieldMap({
     // alignment then corrects the survey's own GPS error (no ground control).
     const tileset = await Cesium.Cesium3DTileset.fromUrl(url, {
       maximumScreenSpaceError: screenSpaceError,
+      // Keep the back sides of the survey's thin, open surfaces visible at low angles.
+      backFaceCulling: false,
       // Bound what stays cached on the GPU; phones get a smaller budget.
       cacheBytes: (isHandheld() ? 256 : 768) * 1024 * 1024,
     })
